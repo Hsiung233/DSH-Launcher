@@ -1,0 +1,61 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="400"
+             x:Class="DSH_Launcher.Views.SettingsPageControl">
+
+    <Grid Margin="24">
+        <StackPanel>
+
+            <TextBlock Text="服务" FontSize="16" FontWeight="SemiBold"/>
+
+            <!-- 启动时运行 DSH 服务 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 4 0 0">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="启动时运行DSH服务"/>
+                    <TextBlock Text="应用启动后自动运行 dsh web(需已安装 @deepseek-ai/dsh)"
+                               FontSize="12"
+                               Opacity="0.7"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="RunDshServiceOnStartupSwitch"
+                              Grid.Column="1"
+                              VerticalAlignment="Center"
+                              IsCheckedChanged="OnRunDshServiceOnStartupChanged"/>
+            </Grid>
+
+            <TextBlock Text="系统托盘"
+                       FontSize="16" FontWeight="SemiBold"
+                       Margin="0 24 0 8"/>
+
+            <!-- 单击托盘图标 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 4 0 0">
+                <TextBlock Text="单击托盘图标" VerticalAlignment="Center"/>
+                <ComboBox x:Name="TraySingleClickCombo"
+                          Grid.Column="1"
+                          Width="180"
+                          SelectionChanged="OnTraySingleClickChanged">
+                    <ComboBoxItem Content="无动作"/>
+                    <ComboBoxItem Content="在WebView中打开"/>
+                    <ComboBoxItem Content="在浏览器中打开"/>
+                    <ComboBoxItem Content="打开界面"/>
+                </ComboBox>
+            </Grid>
+
+            <!-- 双击托盘图标 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 8 0 0">
+                <TextBlock Text="双击托盘图标" VerticalAlignment="Center"/>
+                <ComboBox x:Name="TrayDoubleClickCombo"
+                          Grid.Column="1"
+                          Width="180"
+                          SelectionChanged="OnTrayDoubleClickChanged">
+                    <ComboBoxItem Content="无动作"/>
+                    <ComboBoxItem Content="在WebView中打开"/>
+                    <ComboBoxItem Content="在浏览器中打开"/>
+                    <ComboBoxItem Content="打开界面"/>
+                </ComboBox>
+            </Grid>
+        </StackPanel>
+    </Grid>
+</UserControl>

@@ -1,22 +1,25 @@
-﻿<Window xmlns="https://github.com/avaloniaui"
+<Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="using:DSH_Launcher.ViewModels"
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:views="using:DSH_Launcher.Views"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="720"
         x:Class="DSH_Launcher.Views.MainWindow"
-        x:DataType="vm:MainViewModel"
-        Icon="/Assets/avalonia-logo.ico"
-        Title="DSH Launcher">
+        Title="DSH Launcher"
+        Width="1280" Height="720"
+        MinWidth="720" MinHeight="480">
 
-    <Design.DataContext>
-        <!-- This only sets the DataContext for the previewer in an IDE,
-             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
-        <vm:MainViewModel />
-    </Design.DataContext>
-
-    <TextBox Text="{Binding Greeting}"
-             HorizontalAlignment="Center"
-             VerticalAlignment="Center" />
-
+    <!-- 对应 WinUI 版:NavigationView 顶部导航(首页/设置),内容区切换 -->
+    <ui:FANavigationView x:Name="NavView"
+                         PaneDisplayMode="Top"
+                         IsBackButtonVisible="False"
+                         IsBackEnabled="False"
+                         IsSettingsVisible="False"
+                         SelectionChanged="NavView_SelectionChanged">
+        <ui:FANavigationView.MenuItems>
+            <ui:FANavigationViewItem Content="首页" Tag="home"/>
+            <ui:FANavigationViewItem Content="设置" Tag="settings"/>
+        </ui:FANavigationView.MenuItems>
+    </ui:FANavigationView>
 </Window>

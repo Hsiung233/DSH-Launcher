@@ -1,5 +1,8 @@
 ﻿using Avalonia;
 using System;
+using System.Runtime.Versioning;
+
+[assembly: SupportedOSPlatform("windows")]
 
 namespace DSH_Launcher;
 
