@@ -60,10 +60,17 @@ namespace DSH_Launcher.Services
         {
         }
 
-        private void AppendLog(string text)
+        /// <summary>
+        /// 追加日志。detectWebUrl 仅在 dsh 进程输出流调用时为 true(只有进程输出可能含 Web 地址),
+        /// 其余日志(安装输出、系统信息、启停标记)一律跳过检测。
+        /// </summary>
+        private void AppendLog(string text, bool detectWebUrl = false)
         {
             this._log.Append(text);
-            this.TryDetectWebUrl(text);
+            if (detectWebUrl)
+            {
+                this.TryDetectWebUrl(text);
+            }
             LogAppended?.Invoke(text);
         }
 
@@ -82,7 +89,7 @@ namespace DSH_Launcher.Services
             LogsCleared?.Invoke();
         }
 
-        /// <summary>从输出中检测 Web 服务地址(仅在进程运行期间)。</summary>
+        /// <summary>从当前运行进程的输出中检测 Web 服务地址(一次成功后由守卫短路,不再执行正则)。</summary>
         private void TryDetectWebUrl(string text)
         {
             if (this.WebUrl is not null || !this.IsRunning)
@@ -211,21 +218,28 @@ namespace DSH_Launcher.Services
                 {
                     if (e.Data is not null)
                     {
-                        this.AppendLog(e.Data + "\r\n");
+                        this.AppendLog(e.Data + "\r\n", detectWebUrl: true);
                     }
                 };
                 process.ErrorDataReceived += (_, e) =>
                 {
                     if (e.Data is not null)
                     {
-                        this.AppendLog(e.Data + "\r\n");
+                        this.AppendLog(e.Data + "\r\n", detectWebUrl: true);
                     }
                 };
                 process.Exited += (_, _) => this.OnProcessExited(process);
 
+                // 必须在 Start 之前赋值 this._process:IsRunning 依赖该字段,
+                // 而 stdout 事件可能在 Start 返回后瞬间到达,若此时 _process 仍为 null,
+                // TryDetectWebUrl 会因 !IsRunning 跳过 Web 地址检测(Web 地址只打印一次,错过即丢失)
+                this._process = process;
                 process.Start();
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
+
+                // 绑定到"关闭即杀"作业对象:应用意外退出(崩溃/强杀)时由内核自动停止整个进程树
+                this.AttachProcessToJob(process);
             }
             catch (Exception ex)
             {
@@ -234,7 +248,6 @@ namespace DSH_Launcher.Services
                 return false;
             }
 
-            this._process = process;
             this._startTimeUtc = DateTime.UtcNow;
             StateChanged?.Invoke();
 
@@ -435,6 +448,11 @@ namespace DSH_Launcher.Services
             {
                 this.AppendLog($"[停止进程失败] {ex.Message}\r\n");
             }
+            finally
+            {
+                // 关闭作业句柄兜底:即使 Kill 失败,内核也会终止作业内残留的全部进程
+                this.CloseJobHandle();
+            }
         }
 
         private static async Task<(string Stdout, string Stderr)> RunCaptureAsync(string command)
@@ -449,6 +467,7 @@ namespace DSH_Launcher.Services
         /// <summary>运行命令并把 stdout/stderr 流式追加到日志,进程退出后返回。</summary>
         private async Task RunStreamingAsync(string command)
         {
+            // npm install 流程(npm 输出不含 Web 地址)与之前相同,无需代码变更
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var process = StartHidden(command);
             process.EnableRaisingEvents = true;

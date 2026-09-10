@@ -19,80 +19,89 @@
                                VerticalAlignment="Center"
                                Text="检查中..."/>
 
-                    <!-- 右侧:操作按钮 -->
+                    <!-- 右侧:操作按钮(按状态分三组显示,互斥) -->
                     <StackPanel Grid.Column="1"
                                 Orientation="Horizontal"
                                 Spacing="8"
                                 VerticalAlignment="Center">
                         <ui:FAProgressRing x:Name="HeaderProgress"
-                                      Width="20"
-                                      Height="20"
-                                      IsActive="False"/>
-                        <Button x:Name="InstallButton"
-                                Classes="accent"
-                                IsVisible="False"
-                                Click="OnInstallClick"
-                                ToolTip.Tip="npm install -g @deepseek-ai/dsh">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="InstallButtonText" Text="安装" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="OpenInWebViewButton"
-                                IsVisible="False"
-                                Click="OnOpenInWebViewClick"
-                                ToolTip.Tip="在应用内 WebView 窗口中打开 Web 端">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE774;" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="WebView中打开" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="OpenInBrowserButton"
-                                IsVisible="False"
-                                Click="OnOpenInBrowserClick"
-                                ToolTip.Tip="在系统默认浏览器中打开 Web 端">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8A7;" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="浏览器中打开" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="SettingsButton"
-                                IsVisible="False"
-                                Click="OnSettingsClick">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="设置" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="RunButton"
-                                Classes="accent"
-                                IsVisible="False"
-                                Click="OnRunClick">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE768;" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="运行" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="RestartButton"
-                                IsVisible="False"
-                                Click="OnRestartClick"
-                                ToolTip.Tip="停止并重新启动 dsh 服务">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="重启" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                        <Button x:Name="StopButton"
-                                IsVisible="False"
-                                Click="OnStopClick"
-                                Background="#C42B1C"
-                                Foreground="White"
-                                ToolTip.Tip="停止 dsh 服务">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE71A;" FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="停止" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
+                                           Width="20"
+                                           Height="20"
+                                           IsActive="False"/>
+
+                        <!-- 未安装:安装 -->
+                        <StackPanel x:Name="InstallActionsPanel"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center">
+                            <Button x:Name="InstallButton"
+                                    Classes="accent"
+                                    Click="OnInstallClick"
+                                    ToolTip.Tip="npm install -g @deepseek-ai/dsh">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="InstallButtonText" Text="安装" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <!-- 已安装未运行:运行 -->
+                        <StackPanel x:Name="RunActionsPanel"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center">
+                            <Button x:Name="RunButton"
+                                    Classes="accent"
+                                    Click="OnRunClick">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE768;" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="运行" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <!-- 运行中:打开 / 重启 / 停止 -->
+                        <StackPanel x:Name="RunningActionsPanel"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center">
+                            <Button x:Name="OpenInWebViewButton"
+                                    IsVisible="False"
+                                    Click="OnOpenInWebViewClick"
+                                    ToolTip.Tip="在应用内 WebView 窗口中打开 Web 端">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE774;" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="WebView中打开" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="OpenInBrowserButton"
+                                    IsVisible="False"
+                                    Click="OnOpenInBrowserClick"
+                                    ToolTip.Tip="在系统默认浏览器中打开 Web 端">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8A7;" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="浏览器中打开" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="RestartButton"
+                                    Click="OnRestartClick"
+                                    ToolTip.Tip="停止并重新启动 dsh 服务">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="重启" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="StopButton"
+                                    Click="OnStopClick"
+                                    Background="#C42B1C"
+                                    Foreground="White"
+                                    ToolTip.Tip="停止 dsh 服务">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xF8AE;" FontSize="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="停止" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                 </Grid>
             </Expander.Header>

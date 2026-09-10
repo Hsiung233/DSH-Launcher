@@ -17,9 +17,6 @@ namespace DSH_Launcher.Views
         // 启动失败弹窗互斥标志:内容对话框同时只能打开一个
         private bool _startFailedDialogOpen;
 
-        /// <summary>请求跳转到设置页(由主窗口订阅)。</summary>
-        public event Action? SettingsNavigationRequested;
-
         public HomePageControl()
         {
             InitializeComponent();
@@ -78,19 +75,15 @@ namespace DSH_Launcher.Views
                     : "未安装";
             ToolTip.SetTip(this.StatusText, installed ? $"@deepseek-ai/dsh@{this._dsh.InstalledVersion}" : "@deepseek-ai/dsh");
 
-            this.InstallButton.IsVisible = !installed;
+            // 按状态互斥显示三组按钮:未安装 / 已安装未运行 / 运行中
+            this.InstallActionsPanel.IsVisible = !installed;
+            this.RunActionsPanel.IsVisible = installed && !running;
+            this.RunningActionsPanel.IsVisible = installed && running;
             this.InstallButton.IsEnabled = !installing;
-            this.InstallButtonText.Text = installing ? "安装中..." : "安装";
-
-            this.SettingsButton.IsVisible = installed;
-            this.SettingsButton.IsEnabled = !installing;
-
-            this.RunButton.IsVisible = installed && !running;
-            this.StopButton.IsVisible = installed && running;
-            this.RestartButton.IsVisible = installed && running;
             this.RunButton.IsEnabled = !installing;
             this.StopButton.IsEnabled = !installing;
             this.RestartButton.IsEnabled = !installing;
+            this.InstallButtonText.Text = installing ? "安装中..." : "安装";
 
             // Web 端打开按钮:运行中且已从 stdio 检测到 Web 服务地址时显示
             var hasWebUrl = running && this._dsh.WebUrl is not null;
@@ -161,12 +154,6 @@ namespace DSH_Launcher.Views
             {
                 this.HeaderProgress.IsActive = false;
             }
-        }
-
-        private void OnSettingsClick(object? sender, RoutedEventArgs e)
-        {
-            // 跳转到设置页(导航栏选中项的同步见 MainWindow)
-            this.SettingsNavigationRequested?.Invoke();
         }
 
         private async void OnRunClick(object? sender, RoutedEventArgs e)

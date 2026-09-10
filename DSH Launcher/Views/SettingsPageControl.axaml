@@ -10,6 +10,21 @@
 
             <TextBlock Text="服务" FontSize="16" FontWeight="SemiBold"/>
 
+            <!-- 启动时打开主界面 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 4 0 0">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="启动时打开主界面"/>
+                    <TextBlock Text="应用启动后直接显示主窗口;关闭时启动到系统托盘"
+                               FontSize="12"
+                               Opacity="0.7"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="ShowMainWindowOnStartupSwitch"
+                              Grid.Column="1"
+                              VerticalAlignment="Center"
+                              IsCheckedChanged="OnShowMainWindowOnStartupChanged"/>
+            </Grid>
+
             <!-- 启动时运行 DSH 服务 -->
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 4 0 0">
                 <StackPanel VerticalAlignment="Center">
@@ -24,6 +39,27 @@
                               VerticalAlignment="Center"
                               IsCheckedChanged="OnRunDshServiceOnStartupChanged"/>
             </Grid>
+
+            <!-- 启动DSH服务后 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 4 0 0">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="启动DSH服务后"/>
+                    <TextBlock Text="DSH 服务启动并检测到 Web 地址后自动打开的方式"
+                               FontSize="12"
+                               Opacity="0.7"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <ComboBox x:Name="AfterDshServiceStartedCombo"
+                          Grid.Column="1"
+                          Width="180"
+                          SelectionChanged="OnAfterDshServiceStartedChanged">
+                    <ComboBoxItem Content="无动作"/>
+                    <ComboBoxItem Content="打开WebView"/>
+                    <ComboBoxItem Content="打开浏览器"/>
+                </ComboBox>
+            </Grid>
+
+
 
             <TextBlock Text="系统托盘"
                        FontSize="16" FontWeight="SemiBold"

@@ -27,6 +27,13 @@ namespace DSH_Launcher.Services
 
         /// <summary>应用启动时自动运行 DSH 服务(仅在已安装时生效),默认关闭。</summary>
         public bool RunDshServiceOnStartup { get; set; }
+
+        /// <summary>DSH 服务启动并检测到 Web 地址后的动作(设置页仅提供 None/WebView/Browser),默认无动作。</summary>
+        [JsonConverter(typeof(JsonStringEnumConverter))]
+        public WebOpenAction AfterDshServiceStarted { get; set; } = WebOpenAction.None;
+
+        /// <summary>应用启动时打开主界面;关闭时启动到系统托盘,默认打开。</summary>
+        public bool ShowMainWindowOnStartup { get; set; } = true;
     }
 
     /// <summary>

@@ -33,6 +33,11 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            // 托盘常驻应用必须显式控制退出:默认 OnLastWindowClose 模式下,主窗口隐藏启动时
+            // (未 Show 过,不在 Windows 集合),关闭唯一的 WebView 窗口会被判为"最后一个窗口
+            // 关闭"而整体退出应用。改为仅在托盘菜单"退出程序"中显式调用 Shutdown()。
+            desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
             // 单实例:已有实例在运行时,通知其显示主界面,然后退出当前进程
             _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
             if (!createdNew)
@@ -58,15 +63,29 @@ public partial class App : Application
             // 记录应用启动标记到文件日志(%LOCALAPPDATA%\DSH Launcher\Settings\app.log)
             AppLogService.MarkSessionStart();
 
+            // DSH 服务启动并检测到 Web 地址后,按“启动DSH服务后”设置自动打开
+            DshService.Instance.WebUrlDetected += OnDshWebUrlDetected;
+
             _window = new MainWindow();
-            desktop.MainWindow = _window;
 
             // 拦截标题栏关闭按钮:隐藏到系统托盘而不是退出
             _window.Closing += OnWindowClosing;
 
             InitializeTrayIcon();
 
-            _window.Show();
+            // 启动时打开主界面;关闭该设置时启动到系统托盘(窗口保持隐藏,可从托盘打开)。
+            // 注意:Avalonia 11.1+ 的 ClassicDesktopStyleApplicationLifetime 会在启动结束时
+            // 自动调用 desktop.MainWindow.Show(),因此关闭设置时绝不能给 desktop.MainWindow
+            // 赋值(托盘"打开界面"走 _window.Show(),不依赖该属性),否则主界面总会被显示。
+            if (SettingsService.Instance.Settings.ShowMainWindowOnStartup)
+            {
+                desktop.MainWindow = _window;
+                _window.Show();
+            }
+            else
+            {
+                AppLogService.Write("[启动] 按设置未打开主界面,已启动到系统托盘");
+            }
 
             // 启动时运行 DSH 服务(后台执行,不阻塞首屏;失败仅记录日志,不弹窗)
             if (SettingsService.Instance.Settings.RunDshServiceOnStartup)
@@ -100,6 +119,24 @@ public partial class App : Application
         {
             dsh.AppendSystemLog("[启动] 自动运行 DSH 服务失败,详情见上方日志");
         }
+    }
+
+    /// <summary>
+    /// DSH 服务检测到 Web 地址后按“启动DSH服务后”设置自动打开。
+    /// 无论服务是开机自动运行还是用户手动启动,一律生效。
+    /// </summary>
+    private static void OnDshWebUrlDetected(string url)
+    {
+        var action = SettingsService.Instance.Settings.AfterDshServiceStarted;
+        if (action == WebOpenAction.None)
+        {
+            return;
+        }
+
+        AppLogService.Write($"[启动] 按设置自动打开 Web 端({action}): {url}");
+        // WebUrlDetected 从 stdio 后台线程触发,而 WebOpener 会创建 UI 对象(Window),
+        // 必须调度到 UI 线程,否则抛跨线程异常导致 WebView 被打开异常却退回浏览器
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => WebOpener.Open(action, url));
     }
 
     /// <summary>后台等待“显示主界面”请求(来自二次启动的进程)。</summary>

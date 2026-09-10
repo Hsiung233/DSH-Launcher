@@ -43,15 +43,6 @@ namespace DSH_Launcher.Views
             this._homePage = new HomePageControl();
             this._settingsPage = new SettingsPageControl();
 
-            // 首页“设置”按钮 → 导航到设置页
-            this._homePage.SettingsNavigationRequested += () =>
-            {
-                if (this.NavView.MenuItems.Count > 1)
-                {
-                    this.NavView.SelectedItem = this.NavView.MenuItems[1];
-                }
-            };
-
             this.NavView.Content = this._homePage;
             if (this.NavView.MenuItems.Count > 0)
             {
