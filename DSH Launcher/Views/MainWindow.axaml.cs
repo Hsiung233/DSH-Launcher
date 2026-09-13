@@ -15,6 +15,7 @@ namespace DSH_Launcher.Views
     {
         private readonly HomePageControl _homePage;
         private readonly SettingsPageControl _settingsPage;
+        private readonly WindowStateTracker _windowStateTracker;
 
         public MainWindow()
         {
@@ -37,8 +38,9 @@ namespace DSH_Launcher.Views
                 // 图标加载失败不影响功能
             }
 
-            // 恢复上次的位置/大小;没有有效记录时保持 XAML 初始尺寸 1280×720
-            WindowStateService.Instance.RestoreMainWindow(this);
+            // 恢复上次的位置/大小与最大化状态;没有有效记录时保持 XAML 初始尺寸 1280×720
+            var restoredBounds = WindowStateService.Instance.RestoreMainWindow(this);
+            this._windowStateTracker = WindowStateService.Instance.TrackMainWindow(this, restoredBounds);
 
             this._homePage = new HomePageControl();
             this._settingsPage = new SettingsPageControl();
@@ -49,6 +51,9 @@ namespace DSH_Launcher.Views
                 this.NavView.SelectedItem = this.NavView.MenuItems[0];
             }
         }
+
+        /// <summary>保存主窗口位置/大小与最大化状态(隐藏到托盘、退出应用前由 App 调用)。</summary>
+        public void SaveWindowState() => this._windowStateTracker.Save();
 
         private void NavView_SelectionChanged(object? sender, FANavigationViewSelectionChangedEventArgs args)
         {

@@ -1,4 +1,7 @@
 .vs
+/DSH Launcher/*.user
+/DSH Launcher/**/*.user
+/DSH Launcher/.vscode
+/DSH Launcher/.commandcode
 /DSH Launcher/bin
 /DSH Launcher/obj
-/DSH Launcher/.vscode

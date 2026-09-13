@@ -28,11 +28,23 @@ namespace DSH_Launcher.Views
                 this.ShowMainWindowOnStartupSwitch.IsChecked = settings.ShowMainWindowOnStartup;
                 // 设置页下拉框只有前三个动作(无动作/WebView/浏览器),枚举顺序一致,直接按索引映射
                 this.AfterDshServiceStartedCombo.SelectedIndex = (int)settings.AfterDshServiceStarted;
+                this.WebViewLinkCombo.SelectedIndex = (int)settings.WebViewLink;
             }
             finally
             {
                 this._initializing = false;
             }
+        }
+
+        private void OnWebViewLinkChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (this._initializing || this.WebViewLinkCombo.SelectedIndex < 0)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(
+                s => s.WebViewLink = (WebViewLinkTarget)this.WebViewLinkCombo.SelectedIndex);
         }
 
         private void OnTraySingleClickChanged(object? sender, SelectionChangedEventArgs e)

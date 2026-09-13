@@ -14,6 +14,22 @@ namespace DSH_Launcher.Services
         MainWindow = 3,
     }
 
+    /// <summary>
+    /// 在应用内 WebView 里点击链接(页面请求新窗口/新标签,如 target="_blank"、window.open)时的打开方式。
+    /// 枚举顺序与设置页下拉框的索引一一对应,不要随意调换。
+    /// </summary>
+    public enum WebViewLinkTarget
+    {
+        /// <summary>交给系统默认浏览器打开(默认)。</summary>
+        SystemBrowser = 0,
+
+        /// <summary>在应用内 WebView 窗口中加载(会替换掉当前页面)。</summary>
+        AppWebView = 1,
+
+        /// <summary>不接管,交给 WebView2 底层默认行为。</summary>
+        Unhandled = 2,
+    }
+
     /// <summary>应用设置(持久化为 JSON)。</summary>
     public sealed class AppSettings
     {
@@ -34,6 +50,15 @@ namespace DSH_Launcher.Services
 
         /// <summary>应用启动时打开主界面;关闭时启动到系统托盘,默认打开。</summary>
         public bool ShowMainWindowOnStartup { get; set; } = true;
+
+        /// <summary>
+        /// dsh Web 服务监听端口。0 = 不指定,沿用 dsh 默认端口(3080),对应启动参数 --port。
+        /// </summary>
+        public int ListenPort { get; set; }
+
+        /// <summary>在应用内 WebView 中点击链接(页面请求新窗口)时的打开方式,默认交给系统浏览器。</summary>
+        [JsonConverter(typeof(JsonStringEnumConverter))]
+        public WebViewLinkTarget WebViewLink { get; set; } = WebViewLinkTarget.SystemBrowser;
     }
 
     /// <summary>

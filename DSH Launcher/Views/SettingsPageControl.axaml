@@ -92,6 +92,29 @@
                     <ComboBoxItem Content="打开界面"/>
                 </ComboBox>
             </Grid>
+
+            <TextBlock Text="WebView"
+                       FontSize="16" FontWeight="SemiBold"
+                       Margin="0 24 0 8"/>
+
+            <!-- WebView 内打开链接 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 4 0 0">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="WebView 内打开链接"/>
+                    <TextBlock Text="在应用内 WebView 里点击链接（或页面请求新窗口）时用哪种方式打开"
+                               FontSize="12"
+                               Opacity="0.7"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <ComboBox x:Name="WebViewLinkCombo"
+                          Grid.Column="1"
+                          Width="180"
+                          SelectionChanged="OnWebViewLinkChanged">
+                    <ComboBoxItem Content="系统浏览器"/>
+                    <ComboBoxItem Content="在WebView中打开"/>
+                    <ComboBoxItem Content="交给默认处理"/>
+                </ComboBox>
+            </Grid>
         </StackPanel>
     </Grid>
 </UserControl>

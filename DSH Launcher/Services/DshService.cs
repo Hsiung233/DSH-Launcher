@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -18,7 +19,9 @@ namespace DSH_Launcher.Services
 
         private const string PackageName = "@deepseek-ai/dsh";
         private const string CommandName = "dsh";
-        private const string RunArgs = "web --no-open";
+
+        /// <summary>固定的子命令部分;监听地址与端口由 <see cref="BuildRunArgs"/> 按设置追加。</summary>
+        private const string BaseRunArgs = "web --no-open";
 
         private Process? _process;
         private readonly StringBuilder _log = new();
@@ -26,6 +29,9 @@ namespace DSH_Launcher.Services
         private int _lastStartLogMark;
         private volatile bool _stopRequestedByUser;
         private bool _startFailureHandled;
+
+        /// <summary>最近一次启动实际使用的参数(错误信息中展示,便于用户复现)。</summary>
+        private string _lastRunArgs = BaseRunArgs;
 
         public event Action<string>? LogAppended;
         public event Action? StateChanged;
@@ -47,6 +53,15 @@ namespace DSH_Launcher.Services
         public bool IsInstalling { get; private set; }
         public string LogText => this._log.ToString();
 
+        /// <summary>npm 上的最新版本号;尚未检查或检查失败时为 null。</summary>
+        public string? LatestVersion { get; private set; }
+
+        /// <summary>是否存在可用的新版本(已安装且 npm 上版本更新)。</summary>
+        public bool IsUpdateAvailable =>
+            this.InstalledVersion is not null
+            && this.LatestVersion is not null
+            && CompareVersions(this.LatestVersion, this.InstalledVersion) > 0;
+
         /// <summary>最近一次启动失败的原因(命令、退出代码与输出)。</summary>
         public string LastStartError { get; private set; } = string.Empty;
 
@@ -58,6 +73,27 @@ namespace DSH_Launcher.Services
 
         private DshService()
         {
+        }
+
+        /// <summary>
+        /// 依据设置拼接 dsh 启动参数。
+        /// 端口为 0(未设置)时不追加 --port,沿用 dsh 自身默认端口 3080。
+        /// 监听地址不提供配置:dsh 的 CLI 明确拒绝 --host 0.0.0.0
+        /// ("intentionally not supported yet for safety"),而 127.0.0.1 本就是默认值,
+        /// 因此传 --host 没有任何意义。
+        /// </summary>
+        private static string BuildRunArgs()
+        {
+            var settings = SettingsService.Instance.Settings;
+            var args = new StringBuilder(BaseRunArgs);
+
+            var port = settings.ListenPort is >= 1 and <= 65535 ? settings.ListenPort : 0;
+            if (port > 0)
+            {
+                args.Append(" --port ").Append(port.ToString(CultureInfo.InvariantCulture));
+            }
+
+            return args.ToString();
         }
 
         /// <summary>
@@ -152,6 +188,106 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
+        /// 查询 npm 上的最新版本号,用于判断是否需要显示“更新”按钮。
+        /// 未安装时不查询(没有可更新的对象);查询失败(离线、npm 报错)时把 LatestVersion 置空,
+        /// 即“不确定就当作无更新”,避免误报。
+        /// </summary>
+        public async Task CheckForUpdateAsync()
+        {
+            if (this.InstalledVersion is null)
+            {
+                this.LatestVersion = null;
+                return;
+            }
+
+            try
+            {
+                var (stdout, _) = await RunCaptureAsync($"npm view {PackageName} version");
+                // 输出形如 "1.2.3";多行时取最后一个非空行(npm 可能先打印告警)
+                var latest = stdout
+                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(line => line.Trim())
+                    .LastOrDefault(line => line.Length > 0);
+                this.LatestVersion = string.IsNullOrWhiteSpace(latest) ? null : latest;
+            }
+            catch (Exception ex)
+            {
+                this.LatestVersion = null;
+                this.AppendLog($"[检查更新失败] {ex.Message}\r\n");
+            }
+
+            this.AppendSystemLog($"[版本检查] 已安装 v{this.InstalledVersion},npm 最新 v{this.LatestVersion ?? "(未知)"}"
+                + $"{(this.IsUpdateAvailable ? ",有新版本可用" : ",已是最新")}");
+            StateChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// 更新到最新版:重新执行 npm 全局安装(npm install -g 会升级到 latest),
+        /// 完成后刷新已安装版本与最新版本,使“更新”按钮自动消失。
+        /// </summary>
+        public async Task UpdateAsync()
+        {
+            if (this.IsInstalling || this.InstalledVersion is null)
+            {
+                return;
+            }
+
+            this.AppendLog($"[更新] 当前 v{this.InstalledVersion} → 最新 v{this.LatestVersion ?? "latest"}\r\n");
+            await this.InstallAsync();
+            await this.GetInstalledVersionAsync();
+            await this.CheckForUpdateAsync();
+        }
+
+        /// <summary>
+        /// 比较语义化版本号:返回 &lt;0 表示 a 早于 b,0 表示相同,&gt;0 表示 a 晚于 b。
+        /// 只比较数字部分(缺失的段按 0 处理);数字相同时,带预发布标记的视为更早
+        /// (如 1.0.0-beta &lt; 1.0.0)。
+        /// </summary>
+        private static int CompareVersions(string a, string b)
+        {
+            static (int[] Numbers, string Prerelease) Split(string value)
+            {
+                var text = value.Trim().TrimStart('v', 'V');
+                var dash = text.IndexOf('-');
+                var core = dash >= 0 ? text[..dash] : text;
+                var prerelease = dash >= 0 ? text[(dash + 1)..] : string.Empty;
+                var numbers = core
+                    .Split('.')
+                    .Select(part => int.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : 0)
+                    .ToArray();
+                return (numbers, prerelease);
+            }
+
+            var (aNumbers, aPre) = Split(a);
+            var (bNumbers, bPre) = Split(b);
+
+            var length = Math.Max(aNumbers.Length, bNumbers.Length);
+            for (var i = 0; i < length; i++)
+            {
+                var av = i < aNumbers.Length ? aNumbers[i] : 0;
+                var bv = i < bNumbers.Length ? bNumbers[i] : 0;
+                if (av != bv)
+                {
+                    return av.CompareTo(bv);
+                }
+            }
+
+            if (aPre.Length == 0 && bPre.Length == 0)
+            {
+                return 0;
+            }
+            if (aPre.Length == 0)
+            {
+                return 1;
+            }
+            if (bPre.Length == 0)
+            {
+                return -1;
+            }
+            return string.CompareOrdinal(aPre, bPre);
+        }
+
+        /// <summary>
         /// 启动 dsh 进程(stdio 重定向到日志)。
         /// 流程:where 定位 npm shim → 完整路径启动 → 探测窗口内退出即失败;
         /// 返回 false 表示启动失败(已填充 LastStartError)。
@@ -167,7 +303,8 @@ namespace DSH_Launcher.Services
             this._startFailureHandled = false;
             this.ClearLog();
             this._lastStartLogMark = 0;
-            this.AppendLog($"> {CommandName} {RunArgs}\r\n");
+            this._lastRunArgs = BuildRunArgs();
+            this.AppendLog($"> {CommandName} {this._lastRunArgs}\r\n");
 
             // 1) 先定位 npm 全局 bin 下的 shim,给出明确错误,避免“进程活着但命令没跑起来”的模糊状态
             string shimPath;
@@ -182,7 +319,7 @@ namespace DSH_Launcher.Services
                     ?? string.Empty;
                 if (shimPath.Length == 0)
                 {
-                    this.LastStartError = $"命令: {CommandName} {RunArgs}\r\n\r\n未找到“{CommandName}”命令。"
+                    this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n未找到“{CommandName}”命令。"
                         + "npm 全局 bin 目录可能不在 PATH 中,或包未正确安装。"
                         + $"\r\n\r\nwhere 输出:\r\n{whereOut}{whereErr}".TrimEnd();
                     this.AppendLog("[启动失败] 未找到 dsh 命令\r\n");
@@ -191,7 +328,7 @@ namespace DSH_Launcher.Services
             }
             catch (Exception ex)
             {
-                this.LastStartError = $"命令: {CommandName} {RunArgs}\r\n\r\n定位命令失败:\r\n{ex}";
+                this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n定位命令失败:\r\n{ex}";
                 this.AppendLog($"[启动失败] 定位命令失败: {ex.Message}\r\n");
                 return false;
             }
@@ -203,7 +340,7 @@ namespace DSH_Launcher.Services
                 var psi = new ProcessStartInfo
                 {
                     FileName = "cmd.exe",
-                    Arguments = $"/c call \"{shimPath}\" {RunArgs}",
+                    Arguments = $"/c call \"{shimPath}\" {this._lastRunArgs}",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
@@ -243,7 +380,7 @@ namespace DSH_Launcher.Services
             }
             catch (Exception ex)
             {
-                this.LastStartError = $"命令: {CommandName} {RunArgs}\r\n\r\n无法启动进程:\r\n{ex}";
+                this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n无法启动进程:\r\n{ex}";
                 this.AppendLog($"[启动失败] {ex.Message}\r\n");
                 return false;
             }
@@ -322,7 +459,7 @@ namespace DSH_Launcher.Services
             }
 
             var hints = AnalyzeFailureOutput(output);
-            this.LastStartError = $"命令: {CommandName} {RunArgs}\r\n退出代码: {exitCode}\r\n\r\n可能的原因:\r\n{hints}\r\n\r\n完整输出:\r\n{output}";
+            this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n退出代码: {exitCode}\r\n\r\n可能的原因:\r\n{hints}\r\n\r\n完整输出:\r\n{output}";
             this.AppendLog($"[启动失败,进程已退出,代码 {exitCode}]\r\n");
             return true;
         }
@@ -391,7 +528,7 @@ namespace DSH_Launcher.Services
                     hints.Add($"端口 {port} 已被占用:可能已有一个 dsh 实例正在运行。"
                         + "可先点击\"停止\"按钮,或在任务管理器中结束旧的 node.exe 进程。"
                         + $"\r\n  也可运行 netstat -ano | findstr :{port} 查找占用该端口的进程(末列为 PID)。"
-                        + "\r\n  如需换端口,可在 dsh 的配置中修改监听端口。");
+                        + "\r\n  如需换端口,可在首页展开项里的“端口”输入框中改成一个空闲端口后重新运行。");
                 }
             }
 
@@ -428,31 +565,37 @@ namespace DSH_Launcher.Services
             return string.Join("\r\n", hints.Select(h => "• " + h));
         }
 
-        /// <summary>停止 dsh 进程(连同子进程树)。</summary>
+        /// <summary>
+        /// 停止 dsh 进程(连同子进程树),并关闭 WebView 窗口。
+        /// 注意:重启走 <see cref="RestartAsync"/>,不经过这里,因此重启时 WebView 窗口会保留下来复用。
+        /// </summary>
         public void Stop()
         {
             this._stopRequestedByUser = true;
+
             var process = this._process;
-            if (process is null || process.HasExited)
+            if (process is not null && !process.HasExited)
             {
-                return;
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    this.WebUrl = null;
+                    this.AppendLog("\r\n[进程已停止]\r\n");
+                }
+                catch (Exception ex)
+                {
+                    this.AppendLog($"[停止进程失败] {ex.Message}\r\n");
+                }
+                finally
+                {
+                    // 关闭作业句柄兜底:即使 Kill 失败,内核也会终止作业内残留的全部进程
+                    this.CloseJobHandle();
+                }
             }
 
-            try
-            {
-                process.Kill(entireProcessTree: true);
-                this.WebUrl = null;
-                this.AppendLog("\r\n[进程已停止]\r\n");
-            }
-            catch (Exception ex)
-            {
-                this.AppendLog($"[停止进程失败] {ex.Message}\r\n");
-            }
-            finally
-            {
-                // 关闭作业句柄兜底:即使 Kill 失败,内核也会终止作业内残留的全部进程
-                this.CloseJobHandle();
-            }
+            // 服务已停,WebView 里只剩一个连不上的死页面:真正关闭窗口并释放 WebView2 进程(约 470MB)。
+            // 这里不采用“隐藏”——服务都停了,保留窗口只会白占内存。
+            WebOpener.CloseSession();
         }
 
         private static async Task<(string Stdout, string Stderr)> RunCaptureAsync(string command)

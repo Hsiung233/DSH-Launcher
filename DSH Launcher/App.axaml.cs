@@ -12,7 +12,7 @@ namespace DSH_Launcher;
 
 public partial class App : Application
 {
-    private Window? _window;
+    private MainWindow? _window;
     private TrayService? _tray;
 
     /// <summary>true 表示用户已从托盘菜单选择退出,此时窗口关闭不再拦截。</summary>
@@ -37,6 +37,10 @@ public partial class App : Application
             // (未 Show 过,不在 Windows 集合),关闭唯一的 WebView 窗口会被判为"最后一个窗口
             // 关闭"而整体退出应用。改为仅在托盘菜单"退出程序"中显式调用 Shutdown()。
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+            // 系统关机/注销等外部退出路径:同样要放行 WebView 窗口关闭,
+            // 否则“关闭即隐藏”的拦截会挡住退出
+            desktop.ShutdownRequested += (_, _) => WebOpener.BeginShutdown();
 
             // 单实例:已有实例在运行时,通知其显示主界面,然后退出当前进程
             _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
@@ -155,11 +159,8 @@ public partial class App : Application
             return;
         }
 
-        // 隐藏到托盘前记录窗口位置/大小,下次启动恢复
-        if (_window is not null)
-        {
-            WindowStateService.Instance.SaveMainWindow(_window);
-        }
+        // 隐藏到托盘前记录窗口位置/大小/最大化状态,下次启动恢复
+        _window?.SaveWindowState();
 
         // 隐藏到托盘,进程继续运行
         e.Cancel = true;
@@ -263,14 +264,14 @@ public partial class App : Application
     {
         _exitRequested = true;
 
-        // 保存主窗口位置/大小
-        if (_window is not null)
-        {
-            WindowStateService.Instance.SaveMainWindow(_window);
-        }
+        // 保存主窗口位置/大小/最大化状态
+        _window?.SaveWindowState();
 
-        // 保存已打开的 WebView 窗口位置/大小
+        // 保存所有已打开的 WebView 窗口位置/大小/最大化状态
         WebOpener.SaveOpenWebViewBounds();
+
+        // 放行 WebView 窗口的真正关闭:否则“关闭即隐藏”的拦截会让 Shutdown() 关不掉窗口
+        WebOpener.BeginShutdown();
 
         // 退出前停止 dsh 服务进程
         DshService.Instance.Stop();

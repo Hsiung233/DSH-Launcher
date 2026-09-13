@@ -1,7 +1,10 @@
 using System;
+using System.Globalization;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -16,6 +19,12 @@ namespace DSH_Launcher.Views
 
         // 启动失败弹窗互斥标志:内容对话框同时只能打开一个
         private bool _startFailedDialogOpen;
+
+        // 端口控件回填期间置位,避免把“回填”当成用户修改而触发保存
+        private bool _launchOptionsInitializing;
+
+        // 上一次已知的运行状态,用于识别“运行中 → 已停止”的转换,从而在停止后补一次更新检测
+        private bool _wasRunning;
 
         public HomePageControl()
         {
@@ -36,6 +45,8 @@ namespace DSH_Launcher.Views
 
             this.UpdateLog();
             this.UpdateButtons();
+            this.InitLaunchOptions();
+            this._wasRunning = this._dsh.IsRunning;
             await this.RefreshStatusAsync();
         }
 
@@ -58,6 +69,12 @@ namespace DSH_Launcher.Views
 
             this.HeaderProgress.IsActive = true;
             await this._dsh.GetInstalledVersionAsync();
+            // 运行中不检测更新(避免不必要的 npm 查询),待服务停止后再检测
+            if (!this._dsh.IsRunning)
+            {
+                await this._dsh.CheckForUpdateAsync();
+            }
+
             this.HeaderProgress.IsActive = false;
             this.UpdateButtons();
         }
@@ -79,6 +96,18 @@ namespace DSH_Launcher.Views
             this.InstallActionsPanel.IsVisible = !installed;
             this.RunActionsPanel.IsVisible = installed && !running;
             this.RunningActionsPanel.IsVisible = installed && running;
+
+            // 有新版本时才显示“更新”按钮(仅在未运行时;运行中不允许替换正在使用的包)
+            var updateAvailable = installed && !running && this._dsh.IsUpdateAvailable;
+            this.UpdateButton.IsVisible = updateAvailable;
+            this.UpdateButton.IsEnabled = !installing;
+            if (updateAvailable)
+            {
+                ToolTip.SetTip(
+                    this.UpdateButton,
+                    $"发现新版本 v{this._dsh.LatestVersion}(当前 v{this._dsh.InstalledVersion}),点击更新");
+            }
+
             this.InstallButton.IsEnabled = !installing;
             this.RunButton.IsEnabled = !installing;
             this.StopButton.IsEnabled = !installing;
@@ -89,6 +118,73 @@ namespace DSH_Launcher.Views
             var hasWebUrl = running && this._dsh.WebUrl is not null;
             this.OpenInWebViewButton.IsVisible = hasWebUrl;
             this.OpenInBrowserButton.IsVisible = hasWebUrl;
+        }
+
+        // ---- 监听端口设置 ----
+
+        /// <summary>把设置中的监听端口回填到控件(回填期间不触发保存)。</summary>
+        private void InitLaunchOptions()
+        {
+            this._launchOptionsInitializing = true;
+            try
+            {
+                var port = SettingsService.Instance.Settings.ListenPort;
+                this.PortTextBox.Text = port is >= 1 and <= 65535
+                    ? port.ToString(CultureInfo.InvariantCulture)
+                    : string.Empty;
+            }
+            finally
+            {
+                this._launchOptionsInitializing = false;
+            }
+        }
+
+        /// <summary>把控件当前值写回设置。非法端口视为“留空”,回退为 dsh 默认端口。</summary>
+        private void CommitLaunchOptions()
+        {
+            if (this._launchOptionsInitializing)
+            {
+                return;
+            }
+
+            var text = (this.PortTextBox.Text ?? string.Empty).Trim();
+            var port = 0;
+            if (text.Length > 0)
+            {
+                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
+                    && parsed is >= 1 and <= 65535)
+                {
+                    port = parsed;
+                }
+                else
+                {
+                    // 非法输入:清空为“留空”,避免把无效值写进设置
+                    this._launchOptionsInitializing = true;
+                    this.PortTextBox.Text = string.Empty;
+                    this._launchOptionsInitializing = false;
+                }
+            }
+
+            if (SettingsService.Instance.Settings.ListenPort == port)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(s => s.ListenPort = port);
+        }
+
+        private void OnPortTextInput(object? sender, TextInputEventArgs e)
+        {
+            // 端口只允许数字:在输入阶段就拦截非数字字符
+            if (!string.IsNullOrEmpty(e.Text) && !e.Text.All(char.IsAsciiDigit))
+            {
+                e.Handled = true;
+            }
+        }
+
+        private void OnPortLostFocus(object? sender, RoutedEventArgs e)
+        {
+            this.CommitLaunchOptions();
         }
 
         private void UpdateLog()
@@ -118,7 +214,19 @@ namespace DSH_Launcher.Views
 
         private void Dsh_StateChanged()
         {
-            Dispatcher.UIThread.Post(this.UpdateButtons);
+            Dispatcher.UIThread.Post(async () =>
+            {
+                var running = this._dsh.IsRunning;
+                var wasRunning = this._wasRunning;
+                this._wasRunning = running;
+                this.UpdateButtons();
+
+                // 服务从“运行中”变为已停止后,补一次更新检测(运行期间不检测)
+                if (wasRunning && !running && !this._dsh.IsInstalling)
+                {
+                    await this.RefreshStatusAsync();
+                }
+            });
         }
 
         /// <summary>启动后在观察期内意外退出(非用户手动停止),弹出错误提示。</summary>
@@ -156,8 +264,26 @@ namespace DSH_Launcher.Views
             }
         }
 
+        /// <summary>更新到 npm 上的最新版本;完成后重新检查,按钮随之消失。</summary>
+        private async void OnUpdateClick(object? sender, RoutedEventArgs e)
+        {
+            this.HeaderProgress.IsActive = true;
+            try
+            {
+                await this._dsh.UpdateAsync();
+                await this.RefreshStatusAsync();
+            }
+            finally
+            {
+                this.HeaderProgress.IsActive = false;
+            }
+        }
+
         private async void OnRunClick(object? sender, RoutedEventArgs e)
         {
+            // 端口输入框可能仍是焦点(未触发 LostFocus),启动前先提交一次,确保用的是界面上看到的值
+            this.CommitLaunchOptions();
+
             var ok = await this._dsh.StartAsync();
             if (!ok)
             {
