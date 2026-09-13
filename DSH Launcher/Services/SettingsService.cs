@@ -59,6 +59,28 @@ namespace DSH_Launcher.Services
         /// <summary>在应用内 WebView 中点击链接(页面请求新窗口)时的打开方式,默认交给系统浏览器。</summary>
         [JsonConverter(typeof(JsonStringEnumConverter))]
         public WebViewLinkTarget WebViewLink { get; set; } = WebViewLinkTarget.SystemBrowser;
+
+        /// <summary>
+        /// 关闭 WebView 窗口时是否保留(仅隐藏)窗口。开启则下次打开是毫秒级复用,
+        /// 但会持续占用 WebView2 进程内存;关闭则立即释放、下次需重新加载。默认保留。
+        /// </summary>
+        public bool KeepWebViewAlive { get; set; } = true;
+
+        /// <summary>
+        /// 隐藏后保留 WebView 窗口的时长(分钟),超过则自动关闭并释放 WebView2 内存。
+        /// 0 或超出范围 = 使用默认值 <see cref="DefaultWebViewIdleTimeoutMinutes"/> 分钟。
+        /// 仅在 <see cref="KeepWebViewAlive"/> 开启时有效。
+        /// </summary>
+        public int WebViewIdleTimeoutMinutes { get; set; }
+
+        /// <summary>“保留超时”的默认值(分钟)。</summary>
+        public const int DefaultWebViewIdleTimeoutMinutes = 5;
+
+        /// <summary>“保留超时”允许的最小值(分钟)。</summary>
+        public const int MinWebViewIdleTimeoutMinutes = 1;
+
+        /// <summary>“保留超时”允许的最大值(分钟,24 小时)。</summary>
+        public const int MaxWebViewIdleTimeoutMinutes = 1440;
     }
 
     /// <summary>

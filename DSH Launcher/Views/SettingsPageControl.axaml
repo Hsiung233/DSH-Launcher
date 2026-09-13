@@ -1,12 +1,16 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:DSH_Launcher.Controls"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="400"
              x:Class="DSH_Launcher.Views.SettingsPageControl">
 
-    <Grid Margin="24">
-        <StackPanel>
+    <!-- 内容超出可视高度时可滚动:窗口高度较小时(最小 480)否则会直接裁掉底部的设置项 -->
+    <ScrollViewer x:Name="SettingsScroll"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24">
 
             <TextBlock Text="服务" FontSize="16" FontWeight="SemiBold"/>
 
@@ -115,6 +119,47 @@
                     <ComboBoxItem Content="交给默认处理"/>
                 </ComboBox>
             </Grid>
+
+            <!-- 关闭后是否保留 WebView 窗口 -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 12 0 0">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="保留 WebView 窗口"/>
+                    <TextBlock Text="关闭窗口时只隐藏,下次打开无需重新加载;会持续占用 WebView2 内存。关闭则关闭即释放"
+                               FontSize="12"
+                               Opacity="0.7"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <ToggleSwitch x:Name="KeepWebViewAliveSwitch"
+                              Grid.Column="1"
+                              VerticalAlignment="Center"
+                              IsCheckedChanged="OnKeepWebViewAliveChanged"/>
+            </Grid>
+
+            <!-- 保留超时:仅在“保留 WebView 窗口”开启时可编辑 -->
+            <Grid x:Name="WebViewIdleTimeoutPanel"
+                  ColumnDefinitions="*,Auto"
+                  ColumnSpacing="12"
+                  Margin="0 4 0 0">
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="保留超时（分钟）"/>
+                    <TextBlock Text="隐藏超过该时长后自动关闭窗口并释放 WebView2 内存;留空使用默认 5 分钟"
+                               FontSize="12"
+                               Opacity="0.7"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <controls:NumericUpDownWithDefault x:Name="WebViewIdleTimeoutBox"
+                                                   Grid.Column="1"
+                                                   Width="180"
+                                                   VerticalAlignment="Center"
+                                                   Minimum="1"
+                                                   Maximum="1440"
+                                                   Increment="1"
+                                                   ClipValueToMinMax="True"
+                                                   DefaultValue="5"
+                                                   PlaceholderText="5"
+                                                   ValueChanged="OnWebViewIdleTimeoutChanged"
+                                                   ToolTip.Tip="1-1440 分钟;留空则使用默认 5 分钟"/>
+            </Grid>
         </StackPanel>
-    </Grid>
+    </ScrollViewer>
 </UserControl>

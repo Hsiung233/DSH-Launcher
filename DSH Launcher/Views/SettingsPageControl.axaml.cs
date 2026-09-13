@@ -29,11 +29,69 @@ namespace DSH_Launcher.Views
                 // 设置页下拉框只有前三个动作(无动作/WebView/浏览器),枚举顺序一致,直接按索引映射
                 this.AfterDshServiceStartedCombo.SelectedIndex = (int)settings.AfterDshServiceStarted;
                 this.WebViewLinkCombo.SelectedIndex = (int)settings.WebViewLink;
+                this.KeepWebViewAliveSwitch.IsChecked = settings.KeepWebViewAlive;
+
+                // 0 或超出范围视为“未设置”,留空(null)由控件显示占位提示
+                var timeout = settings.WebViewIdleTimeoutMinutes;
+                this.WebViewIdleTimeoutBox.Value =
+                    timeout is >= AppSettings.MinWebViewIdleTimeoutMinutes and <= AppSettings.MaxWebViewIdleTimeoutMinutes
+                        ? (decimal?)timeout
+                        : null;
+
+                this.UpdateWebViewIdleTimeoutEnabled();
             }
             finally
             {
                 this._initializing = false;
             }
+        }
+
+        /// <summary>“保留超时”只在“保留 WebView 窗口”开启时才可编辑。</summary>
+        private void UpdateWebViewIdleTimeoutEnabled()
+        {
+            this.WebViewIdleTimeoutPanel.IsEnabled = this.KeepWebViewAliveSwitch.IsChecked == true;
+        }
+
+        private void OnKeepWebViewAliveChanged(object? sender, RoutedEventArgs e)
+        {
+            // 联动要在 _initializing 判定之前:回填时也要正确反映可用状态
+            this.UpdateWebViewIdleTimeoutEnabled();
+
+            if (this._initializing)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(
+                s => s.KeepWebViewAlive = this.KeepWebViewAliveSwitch.IsChecked == true);
+        }
+
+        /// <summary>
+        /// “保留超时”变更时写回设置。NumericUpDown 自带 Minimum/Maximum 约束,
+        /// 留空(null)记作 0 = 使用默认 5 分钟。
+        /// </summary>
+        private void OnWebViewIdleTimeoutChanged(object? sender, NumericUpDownValueChangedEventArgs e)
+        {
+            if (this._initializing)
+            {
+                return;
+            }
+
+            var value = this.WebViewIdleTimeoutBox.Value;
+            var minutes = 0;
+            if (value is decimal v
+                && v >= AppSettings.MinWebViewIdleTimeoutMinutes
+                && v <= AppSettings.MaxWebViewIdleTimeoutMinutes)
+            {
+                minutes = (int)v;
+            }
+
+            if (SettingsService.Instance.Settings.WebViewIdleTimeoutMinutes == minutes)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(s => s.WebViewIdleTimeoutMinutes = minutes);
         }
 
         private void OnWebViewLinkChanged(object? sender, SelectionChangedEventArgs e)

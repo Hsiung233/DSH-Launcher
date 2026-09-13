@@ -35,10 +35,20 @@ namespace DSH_Launcher.Services
         private static bool _shuttingDown;
 
         /// <summary>
-        /// 窗口隐藏后保留 WebView2 进程的最长时间。实测一个已加载页面的 WebView2 子进程合计约 480MB,
-        /// 因此空闲超时后要真正关闭窗口把内存还回去;这段时间内的再次打开仍是毫秒级复用。
+        /// 从设置解析“隐藏后保留窗口”的时长。未设置(0)或超出范围时回退到默认 5 分钟。
+        /// 实测一个已加载页面的 WebView2 子进程合计约 470MB,因此超时后要真正关闭窗口把内存还回去。
+        /// 每次使用都现算,改设置无需重启即可生效。
         /// </summary>
-        private static readonly TimeSpan IdleCloseDelay = TimeSpan.FromMinutes(5);
+        private static TimeSpan GetIdleCloseDelay()
+        {
+            var minutes = SettingsService.Instance.Settings.WebViewIdleTimeoutMinutes;
+            if (minutes is < AppSettings.MinWebViewIdleTimeoutMinutes or > AppSettings.MaxWebViewIdleTimeoutMinutes)
+            {
+                minutes = AppSettings.DefaultWebViewIdleTimeoutMinutes;
+            }
+
+            return TimeSpan.FromMinutes(minutes);
+        }
 
         private static DispatcherTimer? _idleCloseTimer;
 
@@ -57,7 +67,7 @@ namespace DSH_Launcher.Services
         {
             if (_idleCloseTimer is null)
             {
-                var timer = new DispatcherTimer { Interval = IdleCloseDelay };
+                var timer = new DispatcherTimer();
                 timer.Tick += (_, _) =>
                 {
                     timer.Stop();
@@ -66,6 +76,8 @@ namespace DSH_Launcher.Services
                 _idleCloseTimer = timer;
             }
 
+            // 每次都从设置重取时长:用户改了设置无需重启即可生效
+            _idleCloseTimer.Interval = GetIdleCloseDelay();
             _idleCloseTimer.Stop();
             _idleCloseTimer.Start();
         }
@@ -80,7 +92,7 @@ namespace DSH_Launcher.Services
             }
 
             AppLogService.Write(
-                $"[WebView] 隐藏已超过 {IdleCloseDelay.TotalMinutes:0} 分钟,关闭窗口以释放 WebView2 内存");
+                $"[WebView] 隐藏已超过 {GetIdleCloseDelay().TotalMinutes:0} 分钟,关闭窗口以释放 WebView2 内存");
             CloseSession();
         }
 
@@ -312,8 +324,15 @@ namespace DSH_Launcher.Services
                         return;
                     }
 
-                    // 用户点关闭 → 只隐藏窗口。
-                    // 保留窗口与 WebView2 适配器,下次打开只是一次 Show(),不必再付冷启动的代价。
+                    // 用户点关闭 → 按设置决定:保留(仅隐藏)还是立即释放
+                    if (!SettingsService.Instance.Settings.KeepWebViewAlive)
+                    {
+                        // 不保留:放行关闭,WebView2 进程随之释放(下次打开需重新加载)
+                        AppLogService.Write("[WebView] 按设置不保留窗口,关闭并释放 WebView2 进程");
+                        return;
+                    }
+
+                    // 保留窗口与 WebView2 适配器:下次打开只是一次 Show(),不必再付冷启动的代价
                     e.Cancel = true;
                     window.Hide();
                     AppLogService.Write("[WebView] 已隐藏窗口(保留 WebView2 进程,便于快速再次打开)");
