@@ -62,6 +62,18 @@ namespace DSH_Launcher.Services
             && this.LatestVersion is not null
             && CompareVersions(this.LatestVersion, this.InstalledVersion) > 0;
 
+        /// <summary>运行中进程的 PID;未运行时为 null。</summary>
+        public int? ProcessId => this._process is { HasExited: false } p ? p.Id : null;
+
+        /// <summary>
+        /// 本次运行的启动时刻(本地时间);未运行时为 null。
+        /// 用“启动时刻”而非“已运行时长”:后者会随时间变陈旧,而界面只在状态变化时刷新。
+        /// </summary>
+        public DateTime? StartedAtLocal =>
+            this.IsRunning && this._startTimeUtc != DateTime.MinValue
+                ? this._startTimeUtc.ToLocalTime()
+                : null;
+
         /// <summary>最近一次启动失败的原因(命令、退出代码与输出)。</summary>
         public string LastStartError { get; private set; } = string.Empty;
 
@@ -117,11 +129,14 @@ namespace DSH_Launcher.Services
             AppLogService.Write(message);
         }
 
-        /// <summary>清空日志并通知 UI。</summary>
+        /// <summary>
+        /// 清空日志文本并通知 UI。
+        /// 注意:这里**不**置空 <see cref="WebUrl"/> —— 服务仍在运行,地址依然有效,
+        /// 清日志不该让"打开/复制地址"的入口消失。该字段只在 Stop/Restart/进程退出时清空。
+        /// </summary>
         public void ClearLog()
         {
             this._log.Clear();
-            this.WebUrl = null;
             LogsCleared?.Invoke();
         }
 
@@ -310,18 +325,13 @@ namespace DSH_Launcher.Services
             string shimPath;
             try
             {
-                var (whereOut, whereErr) = await RunCaptureAsync($"where {CommandName}");
-                shimPath = whereOut
-                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(line => line.Trim())
-                    .FirstOrDefault(line => line.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
-                                            || line.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                    ?? string.Empty;
+                var (found, whereOutput) = await FindDshShimAsync();
+                shimPath = found;
                 if (shimPath.Length == 0)
                 {
                     this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n未找到“{CommandName}”命令。"
                         + "npm 全局 bin 目录可能不在 PATH 中,或包未正确安装。"
-                        + $"\r\n\r\nwhere 输出:\r\n{whereOut}{whereErr}".TrimEnd();
+                        + $"\r\n\r\nwhere 输出:\r\n{whereOutput}";
                     this.AppendLog("[启动失败] 未找到 dsh 命令\r\n");
                     return false;
                 }
@@ -605,6 +615,63 @@ namespace DSH_Launcher.Services
             var stderr = process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync();
             return (await stdout, await stderr);
+        }
+
+        /// <summary>
+        /// 定位 npm 全局 bin 下的 dsh shim(.cmd/.exe)。
+        /// 返回空串表示未找到,同时返回 where 的原始输出以便在错误信息里展示。
+        /// </summary>
+        private static async Task<(string ShimPath, string WhereOutput)> FindDshShimAsync()
+        {
+            var (whereOut, whereErr) = await RunCaptureAsync($"where {CommandName}");
+            var shimPath = whereOut
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(line => line.Trim())
+                .FirstOrDefault(line => line.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+                                        || line.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                ?? string.Empty;
+
+            return (shimPath, (whereOut + whereErr).TrimEnd());
+        }
+
+        /// <summary>
+        /// 查询用于排查启动问题的环境信息:Node / npm 版本、dsh 命令路径。
+        /// 任一项查不到时返回 null(界面显示为未知),不抛异常。
+        /// </summary>
+        public async Task<(string? Node, string? Npm, string? DshPath)> GetEnvironmentInfoAsync()
+        {
+            var node = await TryCaptureFirstLineAsync("node --version");
+            var npm = await TryCaptureFirstLineAsync("npm --version");
+
+            string? dshPath = null;
+            try
+            {
+                var (shim, _) = await FindDshShimAsync();
+                dshPath = shim.Length > 0 ? shim : null;
+            }
+            catch (Exception)
+            {
+                // 定位失败时保持 null
+            }
+
+            return (node, npm, dshPath);
+        }
+
+        /// <summary>执行命令并取首个非空输出行;失败返回 null。</summary>
+        private static async Task<string?> TryCaptureFirstLineAsync(string command)
+        {
+            try
+            {
+                var (stdout, _) = await RunCaptureAsync(command);
+                return stdout
+                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(line => line.Trim())
+                    .FirstOrDefault(line => line.Length > 0);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>运行命令并把 stdout/stderr 流式追加到日志,进程退出后返回。</summary>

@@ -1,6 +1,5 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:controls="using:DSH_Launcher.Controls"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="400"
@@ -116,7 +115,6 @@
                           SelectionChanged="OnWebViewLinkChanged">
                     <ComboBoxItem Content="系统浏览器"/>
                     <ComboBoxItem Content="在WebView中打开"/>
-                    <ComboBoxItem Content="交给默认处理"/>
                 </ComboBox>
             </Grid>
 
@@ -147,18 +145,20 @@
                                Opacity="0.7"
                                TextWrapping="Wrap"/>
                 </StackPanel>
-                <controls:NumericUpDownWithDefault x:Name="WebViewIdleTimeoutBox"
-                                                   Grid.Column="1"
-                                                   Width="180"
-                                                   VerticalAlignment="Center"
-                                                   Minimum="1"
-                                                   Maximum="1440"
-                                                   Increment="1"
-                                                   ClipValueToMinMax="True"
-                                                   DefaultValue="5"
-                                                   PlaceholderText="5"
-                                                   ValueChanged="OnWebViewIdleTimeoutChanged"
-                                                   ToolTip.Tip="1-1440 分钟;留空则使用默认 5 分钟"/>
+                <NumericUpDown x:Name="WebViewIdleTimeoutBox"
+                               Grid.Column="1"
+                               Width="120"
+                               VerticalAlignment="Center"
+                               Minimum="1"
+                               Maximum="1440"
+                               Increment="1"
+                               ClipValueToMinMax="True"
+                               ParsingNumberStyle="None"
+                               PlaceholderText="5"
+                               ShowButtonSpinner="False"
+                               AllowSpin="False"
+                               ValueChanged="OnWebViewIdleTimeoutChanged"
+                               ToolTip.Tip="1-1440 分钟;留空则使用默认 5 分钟"/>
             </Grid>
         </StackPanel>
     </ScrollViewer>

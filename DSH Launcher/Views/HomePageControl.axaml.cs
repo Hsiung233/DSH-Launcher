@@ -1,10 +1,9 @@
 using System;
-using System.Globalization;
-using System.Linq;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
-using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -23,8 +22,21 @@ namespace DSH_Launcher.Views
         // 端口控件回填期间置位,避免把“回填”当成用户修改而触发保存
         private bool _launchOptionsInitializing;
 
+        // 复制反馈期间置位,避免连点导致文字来回跳
+        private bool _copyFeedbackBusy;
+
+        // 环境信息:静态项(Node/npm/dsh 路径)首次查得后缓存,避免每次展开都起子进程
+        private bool _environmentLoaded;
+        private string? _envNode;
+        private string? _envNpm;
+        private string? _envDshPath;
+
         // 上一次已知的运行状态,用于识别“运行中 → 已停止”的转换,从而在停止后补一次更新检测
         private bool _wasRunning;
+
+        // 端口有效范围(与 XAML 里 NumericUpDown 的 Minimum/Maximum 保持一致)
+        private const int MinPort = 1;
+        private const int MaxPort = 65535;
 
         public HomePageControl()
         {
@@ -48,6 +60,10 @@ namespace DSH_Launcher.Views
             this.InitLaunchOptions();
             this._wasRunning = this._dsh.IsRunning;
             await this.RefreshStatusAsync();
+
+            // 环境信息要起子进程查询(约 1 秒),放后台跑,不阻塞页面显示;
+            // 静态项首次查得后缓存,后续进页面只重拼字符串
+            _ = this.EnsureEnvironmentLoadedAsync();
         }
 
         private void OnPageDetached(object? sender, EventArgs e)
@@ -85,12 +101,22 @@ namespace DSH_Launcher.Views
             var installing = this._dsh.IsInstalling;
             var running = this._dsh.IsRunning;
 
-            this.StatusText.Text = installing
-                ? "正在安装 @deepseek-ai/dsh..."
+            this.StatusSubText.Text = installing
+                ? "正在安装..."
                 : installed
-                    ? $"@deepseek-ai/dsh v{this._dsh.InstalledVersion}{(running ? "  (运行中)" : "")}"
+                    ? $"v{this._dsh.InstalledVersion}"
                     : "未安装";
             ToolTip.SetTip(this.StatusText, installed ? $"@deepseek-ai/dsh@{this._dsh.InstalledVersion}" : "@deepseek-ai/dsh");
+
+            // 状态徽标:已安装且不在安装中时显示(安装中状态未知,先不显示)
+            var showBadge = installed && !installing;
+            this.StatusBadge.IsVisible = showBadge;
+            if (showBadge)
+            {
+                this.StatusBadgeText.Text = running ? "运行中" : "已停止";
+                this.RunningDot.IsVisible = running;
+                this.StoppedDot.IsVisible = !running;
+            }
 
             // 按状态互斥显示三组按钮:未安装 / 已安装未运行 / 运行中
             this.InstallActionsPanel.IsVisible = !installed;
@@ -114,10 +140,11 @@ namespace DSH_Launcher.Views
             this.RestartButton.IsEnabled = !installing;
             this.InstallButtonText.Text = installing ? "安装中..." : "安装";
 
-            // Web 端打开按钮:运行中且已从 stdio 检测到 Web 服务地址时显示
+            // Web 端操作按钮:运行中且已从 stdio 检测到 Web 服务地址时显示
             var hasWebUrl = running && this._dsh.WebUrl is not null;
             this.OpenInWebViewButton.IsVisible = hasWebUrl;
             this.OpenInBrowserButton.IsVisible = hasWebUrl;
+            this.CopyWebUrlButton.IsVisible = hasWebUrl;
         }
 
         // ---- 监听端口设置 ----
@@ -129,9 +156,7 @@ namespace DSH_Launcher.Views
             try
             {
                 var port = SettingsService.Instance.Settings.ListenPort;
-                this.PortTextBox.Text = port is >= 1 and <= 65535
-                    ? port.ToString(CultureInfo.InvariantCulture)
-                    : string.Empty;
+                this.PortBox.Value = port is >= MinPort and <= MaxPort ? (decimal?)port : null;
             }
             finally
             {
@@ -139,30 +164,23 @@ namespace DSH_Launcher.Views
             }
         }
 
-        /// <summary>把控件当前值写回设置。非法端口视为“留空”,回退为 dsh 默认端口。</summary>
-        private void CommitLaunchOptions()
+        /// <summary>
+        /// 端口变更时写回设置。留空(null)记作 0 = 使用 dsh 默认端口。
+        /// 数字合法性与 1-65535 范围由控件自身的 Minimum/Maximum/ClipValueToMinMax 保证，
+        /// 这里无需再解析文本。
+        /// </summary>
+        private void OnPortValueChanged(object? sender, NumericUpDownValueChangedEventArgs e)
         {
             if (this._launchOptionsInitializing)
             {
                 return;
             }
 
-            var text = (this.PortTextBox.Text ?? string.Empty).Trim();
+            var value = this.PortBox.Value;
             var port = 0;
-            if (text.Length > 0)
+            if (value is decimal v && v >= MinPort && v <= MaxPort)
             {
-                if (int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var parsed)
-                    && parsed is >= 1 and <= 65535)
-                {
-                    port = parsed;
-                }
-                else
-                {
-                    // 非法输入:清空为“留空”,避免把无效值写进设置
-                    this._launchOptionsInitializing = true;
-                    this.PortTextBox.Text = string.Empty;
-                    this._launchOptionsInitializing = false;
-                }
+                port = (int)v;
             }
 
             if (SettingsService.Instance.Settings.ListenPort == port)
@@ -171,20 +189,6 @@ namespace DSH_Launcher.Views
             }
 
             SettingsService.Instance.Update(s => s.ListenPort = port);
-        }
-
-        private void OnPortTextInput(object? sender, TextInputEventArgs e)
-        {
-            // 端口只允许数字:在输入阶段就拦截非数字字符
-            if (!string.IsNullOrEmpty(e.Text) && !e.Text.All(char.IsAsciiDigit))
-            {
-                e.Handled = true;
-            }
-        }
-
-        private void OnPortLostFocus(object? sender, RoutedEventArgs e)
-        {
-            this.CommitLaunchOptions();
         }
 
         private void UpdateLog()
@@ -220,6 +224,13 @@ namespace DSH_Launcher.Views
                 var wasRunning = this._wasRunning;
                 this._wasRunning = running;
                 this.UpdateButtons();
+
+                // 环境信息里的“运行状态/PID/运行时长”是动态的,状态一变就同步刷新
+                // (静态项已缓存,这里只是重新拼字符串,不起子进程)
+                if (this._environmentLoaded)
+                {
+                    this.EnvTextBlock.Text = this.BuildEnvironmentText();
+                }
 
                 // 服务从“运行中”变为已停止后,补一次更新检测(运行期间不检测)
                 if (wasRunning && !running && !this._dsh.IsInstalling)
@@ -281,9 +292,6 @@ namespace DSH_Launcher.Views
 
         private async void OnRunClick(object? sender, RoutedEventArgs e)
         {
-            // 端口输入框可能仍是焦点(未触发 LostFocus),启动前先提交一次,确保用的是界面上看到的值
-            this.CommitLaunchOptions();
-
             var ok = await this._dsh.StartAsync();
             if (!ok)
             {
@@ -393,6 +401,180 @@ namespace DSH_Launcher.Views
             if (this._dsh.WebUrl is string url)
             {
                 WebOpener.OpenInBrowser(url);
+            }
+        }
+
+        // ---- 复制与日志工具 ----
+
+        /// <summary>复制含 token 的完整 Web 地址。</summary>
+        private async void OnCopyWebUrlClick(object? sender, RoutedEventArgs e)
+        {
+            if (this._dsh.WebUrl is not string url)
+            {
+                return;
+            }
+
+            if (await this.TryCopyTextAsync(url))
+            {
+                await FlashCopiedAsync(this.CopyWebUrlButtonText, "复制URL");
+            }
+        }
+
+        /// <summary>复制日志面板中的全部内容。</summary>
+        private async void OnCopyLogClick(object? sender, RoutedEventArgs e)
+        {
+            if (await this.TryCopyTextAsync(this._dsh.LogText))
+            {
+                await FlashCopiedAsync(this.CopyLogButtonText, "复制");
+            }
+        }
+
+        /// <summary>清空日志面板(仅面板;app.log 文件不受影响)。</summary>
+        private void OnClearLogClick(object? sender, RoutedEventArgs e) => this._dsh.ClearLog();
+
+        /// <summary>
+        /// 用资源管理器定位 app.log。面板里只有 dsh 的 stdio,
+        /// 而 app.log 还包含面板里没有的记录:设置加载、版本检查、WebView 生命周期、启动失败详情。
+        /// </summary>
+        private void OnOpenLogFileClick(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // 先写一行,确保文件存在——否则 explorer /select 无处可选中
+                AppLogService.Write("[应用] 用户请求打开日志文件");
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{AppLogService.LogFilePath}\"")
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                AppLogService.Write($"[应用] 打开日志文件失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>把文本写入剪贴板;成功返回 true。剪贴板不可用时静默失败。</summary>
+        private async Task<bool> TryCopyTextAsync(string text)
+        {
+            try
+            {
+                var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+                if (clipboard is null)
+                {
+                    return false;
+                }
+
+                var transfer = new Avalonia.Input.DataTransfer();
+                transfer.Add(Avalonia.Input.DataTransferItem.CreateText(text));
+                await clipboard.SetDataAsync(transfer);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>复制成功后把按钮文字临时换成“已复制”作为反馈(同一时刻只允许一个反馈在跑)。</summary>
+        private async Task FlashCopiedAsync(TextBlock label, string originalText)
+        {
+            if (this._copyFeedbackBusy)
+            {
+                return;
+            }
+
+            this._copyFeedbackBusy = true;
+            try
+            {
+                label.Text = "已复制";
+                await Task.Delay(1500);
+                label.Text = originalText;
+            }
+            finally
+            {
+                this._copyFeedbackBusy = false;
+            }
+        }
+
+        // ---- 环境与详情 ----
+
+        /// <summary>
+        /// 查询环境信息(Node/npm 版本、dsh 路径)。首次需起子进程(约 1 秒),之后用缓存;
+        /// 刷新时只重新拼字符串,供页面加载与状态变化共用。
+        /// </summary>
+        private async Task EnsureEnvironmentLoadedAsync()
+        {
+            if (this._environmentLoaded)
+            {
+                this.EnvTextBlock.Text = this.BuildEnvironmentText();
+                return;
+            }
+
+            this.EnvProgress.IsActive = true;
+            try
+            {
+                var (node, npm, dshPath) = await this._dsh.GetEnvironmentInfoAsync();
+                this._envNode = node;
+                this._envNpm = npm;
+                this._envDshPath = dshPath;
+                this._environmentLoaded = true;
+            }
+            finally
+            {
+                this.EnvProgress.IsActive = false;
+            }
+
+            this.EnvTextBlock.Text = this.BuildEnvironmentText();
+        }
+
+        /// <summary>拼出便于阅读与粘贴的环境信息文本。</summary>
+        private string BuildEnvironmentText()
+        {
+            var dsh = this._dsh;
+
+            string state;
+            if (!dsh.IsRunning)
+            {
+                state = "已停止";
+            }
+            else
+            {
+                // 用“启动时刻”而非“已运行时长”——后者会随时间变陈旧(本面板只在状态变化时刷新)
+                var parts = new List<string>();
+                if (dsh.ProcessId is int pid)
+                {
+                    parts.Add($"PID {pid}");
+                }
+                if (dsh.StartedAtLocal is DateTime startedAt)
+                {
+                    parts.Add($"启动于 {startedAt:HH:mm:ss}");
+                }
+
+                state = parts.Count > 0 ? $"运行中 ({string.Join("，", parts)})" : "运行中";
+            }
+
+            var appVersion = typeof(HomePageControl).Assembly.GetName().Version?.ToString() ?? "未知";
+
+            var lines = new[]
+            {
+                $"运行状态 : {state}",
+                $"应用版本 : {appVersion}",
+                $"安装版本 : {(dsh.InstalledVersion is string iv ? "v" + iv : "未安装")}",
+                $"Node.js  : {this._envNode ?? "未知"}",
+                $"npm      : {this._envNpm ?? "未知"}",
+                $"dsh 路径 : {this._envDshPath ?? "未找到"}",
+                $"WebView2 : {WebOpener.DescribeWebView2Runtime()}",
+            };
+
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        /// <summary>复制环境信息。</summary>
+        private async void OnCopyEnvClick(object? sender, RoutedEventArgs e)
+        {
+            if (await this.TryCopyTextAsync(this.BuildEnvironmentText()))
+            {
+                await FlashCopiedAsync(this.CopyEnvButtonText, "复制");
             }
         }
     }

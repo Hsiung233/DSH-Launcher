@@ -4,6 +4,7 @@ using System.IO;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 
 namespace DSH_Launcher.Services
@@ -144,6 +145,29 @@ namespace DSH_Launcher.Services
             }
         }
 
+        /// <summary>
+        /// 描述 WebView2 运行时状态(是否安装、版本、不可用原因),供界面展示与排查。
+        /// 用的是静态查询接口,不需要先创建 WebView,所以未打开过 WebView 时也能报告"未安装"。
+        /// </summary>
+        public static string DescribeWebView2Runtime()
+        {
+            try
+            {
+                var info = WebViewAdapterInfo.GetAdapterInfo(WebViewAdapterType.WebView2);
+                if (!info.IsInstalled)
+                {
+                    return $"未安装({info.UnavailableReason ?? "原因未知"})";
+                }
+
+                var version = string.IsNullOrWhiteSpace(info.Version) ? "(版本未知)" : info.Version;
+                return info.IsSupported ? version : $"{version} (当前场景不受支持)";
+            }
+            catch (Exception ex)
+            {
+                return $"查询失败: {ex.Message}";
+            }
+        }
+
         /// <summary>在系统默认浏览器中打开。</summary>
         public static void OpenInBrowser(string url)
         {
@@ -152,12 +176,13 @@ namespace DSH_Launcher.Services
 
         /// <summary>
         /// 处理 WebView 内部发起的“新窗口/新标签”请求(target="_blank"、window.open 等)。
-        /// 由设置项 <see cref="WebViewLinkTarget"/> 决定去向:系统浏览器 / 应用内 WebView 窗口 / 不接管。
+        /// <see cref="WebViewLinkTarget.AppWebView"/>:不接管,交由 WebView2 底层默认处理;
+        /// <see cref="WebViewLinkTarget.SystemBrowser"/>:接管并改由系统默认浏览器打开。
         /// </summary>
         private static void OnNewWindowRequested(WebViewNewWindowRequestedEventArgs e)
         {
             var mode = SettingsService.Instance.Settings.WebViewLink;
-            if (mode == WebViewLinkTarget.Unhandled)
+            if (mode == WebViewLinkTarget.AppWebView)
             {
                 // 不置 Handled,完全交给 WebView2 底层行为
                 return;
@@ -175,37 +200,7 @@ namespace DSH_Launcher.Services
 
             var url = target.ToString();
             AppLogService.Write($"[WebView] 页面请求打开链接({mode}): {url}");
-
-            if (mode == WebViewLinkTarget.SystemBrowser)
-            {
-                OpenInBrowser(url);
-                return;
-            }
-
-            // 在当前 WebView 窗口里加载。target 是我们自己持有的 Uri,跨线程捕获是安全的。
-            if (Dispatcher.UIThread.CheckAccess())
-            {
-                NavigateInSession(target);
-            }
-            else
-            {
-                Dispatcher.UIThread.Post(() => NavigateInSession(target));
-            }
-        }
-
-        /// <summary>在应用内 WebView 会话窗口里加载地址(需在 UI 线程调用);无会话时退回系统浏览器。</summary>
-        private static void NavigateInSession(Uri target)
-        {
-            var session = _session;
-            if (session is null)
-            {
-                OpenInBrowser(target.ToString());
-                return;
-            }
-
-            // 记录新地址:之后按 dsh 地址打开时,因地址不同会正确地导航回 dsh 页面
-            session.RequestedUrl = target.ToString();
-            session.WebView.Navigate(target);
+            OpenInBrowser(url);
         }
 
         /// <summary>

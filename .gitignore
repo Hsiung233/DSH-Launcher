@@ -1,7 +1,8 @@
+.github/skills/dsh-launcher-ui-verify/
 .vs
 /DSH Launcher/*.user
 /DSH Launcher/**/*.user
-/DSH Launcher/.vscode
 /DSH Launcher/.commandcode
+/DSH Launcher/.vscode
 /DSH Launcher/bin
 /DSH Launcher/obj

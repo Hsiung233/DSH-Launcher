@@ -15,37 +15,34 @@ namespace DSH_Launcher.Services
     }
 
     /// <summary>
-    /// 在应用内 WebView 里点击链接(页面请求新窗口/新标签,如 target="_blank"、window.open)时的打开方式。
+    /// 在应用内 WebView 里点击链接(页面请求新窗口/新标签,如 target="_blank"、window.open)时的处理方式。
     /// 枚举顺序与设置页下拉框的索引一一对应,不要随意调换。
     /// </summary>
     public enum WebViewLinkTarget
     {
-        /// <summary>交给系统默认浏览器打开(默认)。</summary>
+        /// <summary>接管并由系统默认浏览器打开(默认)。</summary>
         SystemBrowser = 0,
 
-        /// <summary>在应用内 WebView 窗口中加载(会替换掉当前页面)。</summary>
+        /// <summary>不接管,完全交给 WebView2 底层默认行为。</summary>
         AppWebView = 1,
-
-        /// <summary>不接管,交给 WebView2 底层默认行为。</summary>
-        Unhandled = 2,
     }
 
     /// <summary>应用设置(持久化为 JSON)。</summary>
     public sealed class AppSettings
     {
         /// <summary>单击托盘图标的动作,默认在 WebView 中打开。</summary>
-        [JsonConverter(typeof(JsonStringEnumConverter))]
+        [JsonConverter(typeof(LenientEnumConverter<WebOpenAction>))]
         public WebOpenAction TraySingleClick { get; set; } = WebOpenAction.WebView;
 
         /// <summary>双击托盘图标的动作,默认在浏览器中打开。</summary>
-        [JsonConverter(typeof(JsonStringEnumConverter))]
+        [JsonConverter(typeof(LenientEnumConverter<WebOpenAction>))]
         public WebOpenAction TrayDoubleClick { get; set; } = WebOpenAction.Browser;
 
         /// <summary>应用启动时自动运行 DSH 服务(仅在已安装时生效),默认关闭。</summary>
         public bool RunDshServiceOnStartup { get; set; }
 
         /// <summary>DSH 服务启动并检测到 Web 地址后的动作(设置页仅提供 None/WebView/Browser),默认无动作。</summary>
-        [JsonConverter(typeof(JsonStringEnumConverter))]
+        [JsonConverter(typeof(LenientEnumConverter<WebOpenAction>))]
         public WebOpenAction AfterDshServiceStarted { get; set; } = WebOpenAction.None;
 
         /// <summary>应用启动时打开主界面;关闭时启动到系统托盘,默认打开。</summary>
@@ -57,7 +54,7 @@ namespace DSH_Launcher.Services
         public int ListenPort { get; set; }
 
         /// <summary>在应用内 WebView 中点击链接(页面请求新窗口)时的打开方式,默认交给系统浏览器。</summary>
-        [JsonConverter(typeof(JsonStringEnumConverter))]
+        [JsonConverter(typeof(LenientEnumConverter<WebViewLinkTarget>))]
         public WebViewLinkTarget WebViewLink { get; set; } = WebViewLinkTarget.SystemBrowser;
 
         /// <summary>
@@ -81,6 +78,38 @@ namespace DSH_Launcher.Services
 
         /// <summary>“保留超时”允许的最大值(分钟,24 小时)。</summary>
         public const int MaxWebViewIdleTimeoutMinutes = 1440;
+    }
+
+    /// <summary>
+    /// 宽容的字符串枚举转换器:无法识别的名称(例如设置文件里存着已被删除的枚举值)
+    /// 回退为 <c>default</c>(即第一个成员,约定为各枚举的默认值),而不是抛异常。
+    ///
+    /// 必要性:属性上直接用 <see cref="JsonStringEnumConverter"/> 时,
+    /// 遇到未知名称会抛 <c>JsonException</c>,而 <see cref="SettingsService.Load"/> 是整体回退,
+    /// 结果是**所有设置静默重置为默认**(已实测)。故从枚举中删值属于破坏性变更,必须靠宽容解析兜住。
+    /// </summary>
+    internal sealed class LenientEnumConverter<T> : JsonConverter<T> where T : struct, Enum
+    {
+        public override T Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String
+                && Enum.TryParse<T>(reader.GetString(), out var fromName))
+            {
+                return fromName;
+            }
+
+            if (reader.TokenType == JsonTokenType.Number
+                && reader.TryGetInt32(out var number)
+                && Enum.IsDefined(typeof(T), number))
+            {
+                return (T)Enum.ToObject(typeof(T), number);
+            }
+
+            return default;
+        }
+
+        public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options)
+            => writer.WriteStringValue(value.ToString());
     }
 
     /// <summary>

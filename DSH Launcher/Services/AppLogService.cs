@@ -15,7 +15,11 @@ namespace DSH_Launcher.Services
 
         private static readonly Lock WriteLock = new();
 
-        private static readonly string LogFilePath = Path.Combine(LocalAppDataDirectory, "DSH Launcher", "Settings", "app.log");
+        /// <summary>
+        /// 日志文件路径。必须是延迟求值:应用启动极早期 GetFolderPath 可能瞬时返回空串,
+        /// 用 static readonly 字段会把空值永久固化(与 SettingsService 同样的防御)。
+        /// </summary>
+        public static string LogFilePath => Path.Combine(LocalAppDataDirectory, "DSH Launcher", "Settings", "app.log");
 
         /// <summary>
         /// 解析 LocalAppData 目录。与 SettingsService 同样的防御:
