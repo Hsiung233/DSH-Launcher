@@ -48,7 +48,7 @@ namespace DSH_Launcher.Services
         public static WindowStateService Instance { get; } = new();
 
         private static readonly string StateFilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            PlatformProcess.LocalAppDataDirectory,
             "DSH Launcher", "Settings", "window-state.json");
 
         private static readonly JsonSerializerOptions JsonOptions = new()

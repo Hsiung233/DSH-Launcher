@@ -325,13 +325,13 @@ namespace DSH_Launcher.Services
             string shimPath;
             try
             {
-                var (found, whereOutput) = await FindDshShimAsync();
+                var (found, probeOutput) = await FindDshShimAsync();
                 shimPath = found;
                 if (shimPath.Length == 0)
                 {
                     this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n未找到“{CommandName}”命令。"
                         + "npm 全局 bin 目录可能不在 PATH 中,或包未正确安装。"
-                        + $"\r\n\r\nwhere 输出:\r\n{whereOutput}";
+                        + $"\r\n\r\n{PlatformProcess.LocateCommandLine(CommandName)} 输出:\r\n{probeOutput}";
                     this.AppendLog("[启动失败] 未找到 dsh 命令\r\n");
                     return false;
                 }
@@ -343,22 +343,18 @@ namespace DSH_Launcher.Services
                 return false;
             }
 
-            // 2) 用完整路径通过 cmd 启动:不依赖 PATH;call 确保 .cmd shim 被正确执行且 cmd 等待其结束
+            // 2) 用完整路径通过系统 shell 启动:不依赖调用方进程的 PATH。
+            //    Windows: cmd.exe /c call "<shim>" args(.cmd shim 必须经 cmd 解释);
+            //    类 Unix: /bin/zsh -lc '<shim> args'(经登录 shell 装配 PATH,才能找到 node)。
             Process process;
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c call \"{shimPath}\" {this._lastRunArgs}",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    RedirectStandardInput = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8,
-                };
+                var psi = PlatformProcess.CreateShellStartInfo(
+                    PlatformProcess.ShellCommandForExecutable(shimPath, this._lastRunArgs),
+                    redirectOutput: true,
+                    redirectInput: true);
+                psi.StandardOutputEncoding = Encoding.UTF8;
+                psi.StandardErrorEncoding = Encoding.UTF8;
 
                 process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 process.OutputDataReceived += (_, e) =>
@@ -618,20 +614,28 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 定位 npm 全局 bin 下的 dsh shim(.cmd/.exe)。
-        /// 返回空串表示未找到,同时返回 where 的原始输出以便在错误信息里展示。
+        /// 定位 npm 全局 bin 下的 dsh 命令。
+        /// Windows:where dsh → 取 .cmd/.exe(npm 装出来的是 dsh.cmd);
+        /// 类 Unix(macOS/Linux):command -v dsh → 取第一条(npm 装出来的是**无扩展名**的
+        /// 符号链接,例如 /usr/local/bin/dsh,按 .cmd/.exe 过滤只会得出“未找到”)。
+        /// 返回空串表示未找到,同时返回探测命令的原始输出以便在错误信息里展示。
         /// </summary>
-        private static async Task<(string ShimPath, string WhereOutput)> FindDshShimAsync()
+        private static async Task<(string ShimPath, string ProbeOutput)> FindDshShimAsync()
         {
-            var (whereOut, whereErr) = await RunCaptureAsync($"where {CommandName}");
-            var shimPath = whereOut
+            var probeCommand = PlatformProcess.LocateCommandLine(CommandName);
+            var (probeOut, probeErr) = await RunCaptureAsync(probeCommand);
+
+            var candidates = probeOut
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Select(line => line.Trim())
-                .FirstOrDefault(line => line.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
-                                        || line.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                ?? string.Empty;
+                .Where(line => line.Length > 0);
 
-            return (shimPath, (whereOut + whereErr).TrimEnd());
+            var shimPath = PlatformProcess.IsWindows
+                ? candidates.FirstOrDefault(line => line.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+                                                    || line.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) ?? string.Empty
+                : candidates.FirstOrDefault() ?? string.Empty;
+
+            return (shimPath, (probeOut + probeErr).TrimEnd());
         }
 
         /// <summary>
@@ -707,18 +711,12 @@ namespace DSH_Launcher.Services
             await exited.Task;
         }
 
+        /// <summary>
+        /// 静默执行一条命令行并捕获 stdout/stderr。
+        /// Windows 走 cmd.exe /c,类 Unix 走登录 shell -lc(见 <see cref="PlatformProcess"/>)。
+        /// </summary>
         private static Process StartHidden(string command)
-        {
-            return Process.Start(new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = "/c " + command,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            })!;
-        }
+            => Process.Start(PlatformProcess.CreateShellStartInfo(command, redirectOutput: true))!;
 
         [GeneratedRegex(@"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d+(?:/[^\s""'<>]*)?", RegexOptions.IgnoreCase | RegexOptions.Compiled, "zh-CN")]
         private static partial Regex GetWebUrlRegex();

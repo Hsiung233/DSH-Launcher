@@ -5,7 +5,8 @@ using System.Threading;
 namespace DSH_Launcher.Services
 {
     /// <summary>
-    /// 应用级文件日志(诊断用)。写入 %LOCALAPPDATA%\DSH Launcher\Settings\app.log。
+    /// 应用级文件日志(诊断用)。写入用户数据目录下的 DSH Launcher\Settings\app.log
+    /// (Windows:%LOCALAPPDATA%;macOS:~/Library/Application Support)。
     /// 所有写入失败均静默忽略,不影响应用功能。
     /// </summary>
     public static class AppLogService
@@ -16,27 +17,11 @@ namespace DSH_Launcher.Services
         private static readonly Lock WriteLock = new();
 
         /// <summary>
-        /// 日志文件路径。必须是延迟求值:应用启动极早期 GetFolderPath 可能瞬时返回空串,
+        /// 日志文件路径。必须是延迟求值:应用启动极早期解析用户目录可能瞬时为空,
         /// 用 static readonly 字段会把空值永久固化(与 SettingsService 同样的防御)。
         /// </summary>
-        public static string LogFilePath => Path.Combine(LocalAppDataDirectory, "DSH Launcher", "Settings", "app.log");
-
-        /// <summary>
-        /// 解析 LocalAppData 目录。与 SettingsService 同样的防御:
-        /// GetFolderPath 异常时回退 %LOCALAPPDATA% 环境变量。
-        /// </summary>
-        private static string LocalAppDataDirectory
-        {
-            get
-            {
-                var path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                if (string.IsNullOrEmpty(path))
-                {
-                    path = Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? string.Empty;
-                }
-                return path;
-            }
-        }
+        public static string LogFilePath => Path.Combine(
+            PlatformProcess.LocalAppDataDirectory, "DSH Launcher", "Settings", "app.log");
 
 
         /// <summary>在日志中标记一次应用启动(分隔线 + 时间)。</summary>

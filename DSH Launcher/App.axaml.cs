@@ -39,8 +39,10 @@ public partial class App : Application
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
             // 系统关机/注销等外部退出路径:同样要放行 WebView 窗口关闭,
-            // 否则“关闭即隐藏”的拦截会挡住退出
+            // 否则“关闭即隐藏”的拦截会挡住退出。这同时覆盖 macOS 的 Cmd+Q/退出菜单
+            // (macOS 上原生 Quit 会走 ShutdownRequested)。
             desktop.ShutdownRequested += (_, _) => WebOpener.BeginShutdown();
+            desktop.ShutdownRequested += (_, _) => StopDshOnShutdown();
 
             // 单实例:已有实例在运行时,通知其显示主界面,然后退出当前进程
             _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
@@ -149,6 +151,20 @@ public partial class App : Application
         while (_showMainWindowEvent is not null && _showMainWindowEvent.WaitOne())
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(ShowMainWindow);
+        }
+    }
+
+    /// <summary>
+    /// 外部发起的退出(系统关机、注销,以及 macOS 的 Cmd+Q/退出菜单)路径上兜底停掉 dsh 进程。
+    /// Windows 上仍有作业对象兜底;macOS 无内核级兜底,这一步就是唯一防线,不能省。
+    /// <see cref="DshService.Stop"/> 是幂等的(无进程时空转),与托盘“退出程序”路径重复调用无副作用。
+    /// </summary>
+    private static void StopDshOnShutdown()
+    {
+        if (DshService.Instance.IsRunning)
+        {
+            AppLogService.Write("[退出] ShutdownRequested:停止 dsh 服务进程");
+            DshService.Instance.Stop();
         }
     }
 

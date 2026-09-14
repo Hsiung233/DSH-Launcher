@@ -433,19 +433,17 @@ namespace DSH_Launcher.Views
         private void OnClearLogClick(object? sender, RoutedEventArgs e) => this._dsh.ClearLog();
 
         /// <summary>
-        /// 用资源管理器定位 app.log。面板里只有 dsh 的 stdio,
+        /// 在系统文件管理器中定位 app.log。面板里只有 dsh 的 stdio,
         /// 而 app.log 还包含面板里没有的记录:设置加载、版本检查、WebView 生命周期、启动失败详情。
+        /// Windows 用 explorer /select,macOS 用 open -R(见 <see cref="PlatformProcess"/>)。
         /// </summary>
         private void OnOpenLogFileClick(object? sender, RoutedEventArgs e)
         {
             try
             {
-                // 先写一行,确保文件存在——否则 explorer /select 无处可选中
+                // 先写一行,确保文件存在——否则“在文件夹中显示”无处可选中
                 AppLogService.Write("[应用] 用户请求打开日志文件");
-                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{AppLogService.LogFilePath}\"")
-                {
-                    UseShellExecute = true,
-                });
+                Process.Start(PlatformProcess.CreateRevealInFileManagerStartInfo(AppLogService.LogFilePath));
             }
             catch (Exception ex)
             {
@@ -563,7 +561,7 @@ namespace DSH_Launcher.Views
                 $"Node.js  : {this._envNode ?? "未知"}",
                 $"npm      : {this._envNpm ?? "未知"}",
                 $"dsh 路径 : {this._envDshPath ?? "未找到"}",
-                $"WebView2 : {WebOpener.DescribeWebView2Runtime()}",
+                $"{WebOpener.EngineDisplayName} : {WebOpener.DescribeWebViewRuntime()}",
             };
 
             return string.Join(Environment.NewLine, lines);

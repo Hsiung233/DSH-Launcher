@@ -18,9 +18,20 @@ namespace DSH_Launcher.Services
         /// <summary>
         /// 把进程分配到新的"关闭即杀进程树"作业中,失败静默(只影响意外退出时的兜底清理)。
         /// 返回的作业句柄随本次 dsh 进程生命周期,在下一次启动时关闭旧句柄。
+        /// 非 Windows 平台直接跳过:正常退出(含 mac Cmd+Q,由 App.ShutdownRequested 兜底)
+        /// 与用户点停止的路径都走 <see cref="Process.Kill(entireProcessTree: true)"/>
+        /// (.NET 的 KillTree 本身跨平台:SIGSTOP→递归子进程→SIGKILL);
+        /// 仅"应用被强杀且来不及执行任何托管代码"这一场景在 macOS 无兜底
+        /// (纯托管 API 无 setpgid,按约定不引入平台 P/Invoke)。
         /// </summary>
         private void AttachProcessToJob(Process process)
         {
+            // macOS/Linux 没有作业对象;P/Invoke kernel32 会抛 DllNotFoundException,必须早退
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             var job = NativeJob.CreateKillOnCloseJob();
             if (job == IntPtr.Zero || !NativeJob.AssignProcessToJob(job, process.Handle))
             {

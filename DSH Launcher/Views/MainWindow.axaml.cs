@@ -21,8 +21,12 @@ namespace DSH_Launcher.Views
         {
             InitializeComponent();
 
-            // Mica 背景(Win11;不支持时自动回退,不影响功能)
-            TransparencyLevelHint = new List<WindowTransparencyLevel> { WindowTransparencyLevel.Mica };
+            // 窗口背景材质:Windows 11 用 Mica;其他平台用 Blur(macOS 毛玻璃/Linux blur-behind)。
+            // 各平台不支持该级别时会自动回退,不影响功能。
+            TransparencyLevelHint = new List<WindowTransparencyLevel>
+            {
+                OperatingSystem.IsWindows() ? WindowTransparencyLevel.Mica : WindowTransparencyLevel.Blur,
+            };
 
             // 设置窗口/任务栏图标(Assets\logo-512.png 随应用部署)
             try

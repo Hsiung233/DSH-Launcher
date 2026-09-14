@@ -113,37 +113,24 @@ namespace DSH_Launcher.Services
     }
 
     /// <summary>
-    /// 设置服务(单例)。文件保存在 %LOCALAPPDATA%\DSH Launcher\Settings\settings.json。
+    /// 设置服务(单例)。文件保存在:
+    /// Windows:%APPDATA%\DSH Launcher\Settings\settings.json;
+    /// macOS:~/Library/Application Support/DSH Launcher/Settings/settings.json。
+    /// 本机防御(仅 Windows 需要回退链)已由 <see cref="PlatformProcess.RoamingAppDataDirectory"/> 收敛。
     /// </summary>
     public sealed class SettingsService
     {
         public static SettingsService Instance { get; } = new();
 
         /// <summary>
-        /// 设置文件路径。必须是延迟求值:实测应用启动极早期 GetFolderPath(ApplicationData)
-        /// 可能瞬时返回空串(SHGetKnownFolderPath 未就绪),静态字段会把空值永久固化;
+        /// 设置文件路径。必须是延迟求值:应用启动极早期解析用户目录可能瞬时为空
+        /// (Windows 上 SHGetKnownFolderPath 未就绪),静态字段会把空值永久固化;
         /// 每次使用时现算即可拿到正确路径。
         /// </summary>
-        private static string SettingsFilePath => Path.Combine(GetRoamingAppDataDirectory(), "DSH Launcher", "Settings", "settings.json");
+        private static string SettingsFilePath => Path.Combine(
+            PlatformProcess.RoamingAppDataDirectory, "DSH Launcher", "Settings", "settings.json");
 
-        /// <summary>
-        /// 解析 Roaming AppData 目录。
-        /// 实测在本应用进程中 GetFolderPath(ApplicationData) 可能返回空串(原因不明,
-        /// 同进程内 LocalApplicationData 正常),因此依次回退:%APPDATA% 环境变量 → LocalAppData。
-        /// </summary>
-        private static string GetRoamingAppDataDirectory()
-        {
-            var path = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            if (string.IsNullOrEmpty(path))
-            {
-                path = Environment.GetEnvironmentVariable("APPDATA") ?? string.Empty;
-            }
-            if (string.IsNullOrEmpty(path))
-            {
-                path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            }
-            return path;
-        }
+        private static string GetRoamingAppDataDirectory() => PlatformProcess.RoamingAppDataDirectory;
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {

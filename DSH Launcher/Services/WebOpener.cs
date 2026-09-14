@@ -3,8 +3,10 @@ using System.Diagnostics;
 using System.IO;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
 namespace DSH_Launcher.Services
@@ -146,17 +148,29 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 描述 WebView2 运行时状态(是否安装、版本、不可用原因),供界面展示与排查。
-        /// 用的是静态查询接口,不需要先创建 WebView,所以未打开过 WebView 时也能报告"未安装"。
+        /// 当前平台原生的 WebView 适配器类型。
+        /// 包内各适配器的探测实现:<see cref="WebViewAdapterType.WebView2"/> 只在 Windows 上已安装时可用,
+        /// <see cref="WebViewAdapterType.WkWebView"/> 在 macOS(10.10+)恒可用。
+        /// 应用内 <see cref="NativeWebView"/> 正是按同样的平台顺序自动选择适配器,两处保持一致。
         /// </summary>
-        public static string DescribeWebView2Runtime()
+        private static WebViewAdapterType CurrentAdapterType =>
+            PlatformProcess.IsWindows ? WebViewAdapterType.WebView2 : WebViewAdapterType.WkWebView;
+
+        /// <summary>当前平台 WebView 引擎的展示名(仅用于界面文案/日志)。</summary>
+        public static string EngineDisplayName => PlatformProcess.IsWindows ? "WebView2" : "WKWebView";
+
+        /// <summary>
+        /// 描述当前平台 WebView 引擎的运行时状态(是否可用、版本、不可用原因),供界面展示与排查。
+        /// 用的是静态查询接口,不需要先创建 WebView,所以未打开过 WebView 时也能报告。
+        /// </summary>
+        public static string DescribeWebViewRuntime()
         {
             try
             {
-                var info = WebViewAdapterInfo.GetAdapterInfo(WebViewAdapterType.WebView2);
+                var info = WebViewAdapterInfo.GetAdapterInfo(CurrentAdapterType);
                 if (!info.IsInstalled)
                 {
-                    return $"未安装({info.UnavailableReason ?? "原因未知"})";
+                    return $"不可用({info.UnavailableReason ?? "原因未知"})";
                 }
 
                 var version = string.IsNullOrWhiteSpace(info.Version) ? "(版本未知)" : info.Version;
@@ -168,10 +182,68 @@ namespace DSH_Launcher.Services
             }
         }
 
-        /// <summary>在系统默认浏览器中打开。</summary>
-        public static void OpenInBrowser(string url)
+        /// <summary>在系统默认浏览器中打开。返回 false 表示当前平台没有可用的打开方式。</summary>
+        public static bool OpenInBrowser(string url)
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            var uri = new Uri(url);
+
+            // 用 Avalonia 官方启动器(TopLevel.Launcher → 平台 ILauncher 实现):
+            // Windows = shell 关联程序、macOS = open、Linux = xdg-open,各自平台正确;
+            // 不再手写 open/xdg-open 分支。Win32 实现即 BclLauncher(UseShellExecute=true),
+            // 与旧手写行为等价。
+            // 任意 TopLevel(主窗口或 WebView 窗口)都可以,托盘回调线程拿不到窗口时
+            // 退回经 AvaloniaLocator 取 static TopLevel 实现,都失败则自行走 Process。
+            var launcher = GetLauncher();
+            if (launcher is not null)
+            {
+                var ok = launcher.LaunchUriAsync(uri).GetAwaiter().GetResult();
+                if (ok)
+                {
+                    return true;
+                }
+
+                AppLogService.Write($"[浏览器] Launcher 拒绝打开({url}),退回直接启动方式");
+            }
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AppLogService.Write($"[浏览器] 打开失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 取 Avalonia 官方 <see cref="ILauncher"/>。需要已创建的 TopLevel/窗口:
+        /// Win32 的 WindowImpl.TryGetFeature(ILauncher) 返回 BclLauncher。
+        /// 服务类没有窗口引用,这里遍历应用当前窗口取第一个;没有窗口(极早期/纯托盘回调)时返回 null。
+        /// </summary>
+        private static ILauncher? GetLauncher()
+        {
+            try
+            {
+                if (Application.Current?.ApplicationLifetime
+                    is IClassicDesktopStyleApplicationLifetime desktop)
+                {
+                    foreach (var window in desktop.Windows)
+                    {
+                        if (window.PlatformImpl is not null)
+                        {
+                            return window.Launcher;
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 生命周期不可用时返回 null,由调用方回退
+            }
+
+            return null;
         }
 
         /// <summary>

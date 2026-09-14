@@ -3,7 +3,9 @@ using System.IO;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 
 namespace DSH_Launcher.Services
@@ -42,6 +44,12 @@ namespace DSH_Launcher.Services
         /// </summary>
         public bool EnableDoubleClickDetection { get; set; } = true;
 
+        /// <summary>平台设置取不到时的双击间隔兜底值(毫秒),与 Avalonia.Native 的默认值一致。</summary>
+        private const double DefaultDoubleClickTimeMs = 500;
+
+        /// <summary>认为平台返回值可信的上限(毫秒);超出则当作异常值,退回默认值。</summary>
+        private const double MaxDoubleClickTimeMs = 5000;
+
         private TrayService(string tip)
         {
             _trayIcon = new TrayIcon
@@ -59,6 +67,9 @@ namespace DSH_Launcher.Services
             {
                 TrayIcon.SetIcons(Application.Current, new TrayIcons { _trayIcon });
             }
+
+            // 记录实际生效的双击间隔:排查"单击/双击判定"问题时可据此确认平台取值是否合理
+            AppLogService.Write($"[托盘] 已创建托盘图标,双击间隔 {GetDoubleClickTime():0.#} 毫秒");
         }
 
         /// <summary>创建托盘图标;失败时返回 null(不影响主功能)。</summary>
@@ -157,11 +168,8 @@ namespace DSH_Launcher.Services
 
         public void Dispose()
         {
-            if (_singleClickTimer is not null)
-            {
-                _singleClickTimer.Stop();
-                _singleClickTimer = null;
-            }
+            _singleClickTimer?.Stop();
+            _singleClickTimer = null;
 
             if (_trayIcon is not null)
             {
@@ -176,7 +184,28 @@ namespace DSH_Launcher.Services
             }
         }
 
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern uint GetDoubleClickTime();
+        /// <summary>
+        /// 系统双击间隔(毫秒)。用 Avalonia 的跨平台平台设置,不再直接 P/Invoke user32:
+        /// Windows 上 <see cref="IPlatformSettings.GetDoubleTapTime"/> 内部就是 GetDoubleClickTime(),
+        /// 因此行为与改造前一致;macOS/Linux 由各自平台实现提供,
+        /// 不会因缺少 user32.dll 在点击托盘时抛 DllNotFoundException。
+        /// </summary>
+        private static double GetDoubleClickTime()
+        {
+            try
+            {
+                var time = Application.Current?.PlatformSettings?.GetDoubleTapTime(PointerType.Mouse);
+                if (time is { TotalMilliseconds: > 0 and <= MaxDoubleClickTimeMs })
+                {
+                    return time.Value.TotalMilliseconds;
+                }
+            }
+            catch (Exception)
+            {
+                // 平台设置不可用(极早期/受限环境)时退回通用默认值
+            }
+
+            return DefaultDoubleClickTimeMs;
+        }
     }
 }
