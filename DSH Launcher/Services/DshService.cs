@@ -614,6 +614,87 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
+        /// 用定位到的 dsh shim 执行一条 dsh 子命令并捕获输出(供插件管理等场景复用;
+        /// 复用同一套 shim 定位逻辑,避免两处各自找命令而行为不一致)。
+        /// 返回码 -1 表示未能定位 dsh 命令(说明见 Stderr)。
+        /// </summary>
+        public async Task<(int ExitCode, string Stdout, string Stderr)> RunDshCaptureAsync(string arguments)
+        {
+            var (shimPath, locateError) = await TryLocateShimAsync();
+            if (shimPath.Length == 0)
+            {
+                return (-1, string.Empty, locateError);
+            }
+
+            using var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments));
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return (process.ExitCode, await stdout, await stderr);
+        }
+
+        /// <summary>
+        /// 用定位到的 dsh shim 执行一条 dsh 子命令,输出按行流式回传(用于需要实时反馈的操作,如安装/卸载插件)。
+        /// 返回码 -1 表示未能定位 dsh 命令。
+        /// </summary>
+        public async Task<int> RunDshStreamingAsync(string arguments, Action<string> onOutput)
+        {
+            var (shimPath, locateError) = await TryLocateShimAsync();
+            if (shimPath.Length == 0)
+            {
+                onOutput(locateError);
+                return -1;
+            }
+
+            var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments));
+            process.EnableRaisingEvents = true;
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is not null)
+                {
+                    onOutput(e.Data);
+                }
+            };
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is not null)
+                {
+                    onOutput(e.Data);
+                }
+            };
+            process.Exited += (_, _) => exited.TrySetResult();
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            await exited.Task;
+
+            // 无参 WaitForExit 会等待异步输出读取完毕,避免 pnpm 末尾输出被截断
+            await Task.Run(process.WaitForExit);
+            var exitCode = process.ExitCode;
+            process.Dispose();
+            return exitCode;
+        }
+
+        /// <summary>定位 dsh shim;失败时返回空串与可直接展示的错误说明。</summary>
+        private static async Task<(string ShimPath, string Error)> TryLocateShimAsync()
+        {
+            try
+            {
+                var (found, probeOutput) = await FindDshShimAsync();
+                return found.Length > 0
+                    ? (found, string.Empty)
+                    : (string.Empty, $"未找到“{CommandName}”命令。npm 全局 bin 目录可能不在 PATH 中,或包未正确安装。\r\n"
+                        + $"{PlatformProcess.LocateCommandLine(CommandName)} 输出:\r\n{probeOutput}");
+            }
+            catch (Exception ex)
+            {
+                return (string.Empty, $"定位 dsh 命令失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// 定位 npm 全局 bin 下的 dsh 命令。
         /// Windows:where dsh → 取 .cmd/.exe(npm 装出来的是 dsh.cmd);
         /// 类 Unix(macOS/Linux):command -v dsh → 取第一条(npm 装出来的是**无扩展名**的

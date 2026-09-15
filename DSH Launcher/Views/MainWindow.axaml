@@ -10,7 +10,7 @@
         Width="1280" Height="720"
         MinWidth="1120" MinHeight="630">
 
-    <!-- 对应 WinUI 版:NavigationView 顶部导航(首页/设置),内容区切换 -->
+    <!-- 对应 WinUI 版:NavigationView 顶部导航(首页/插件/设置),内容区切换 -->
     <ui:FANavigationView x:Name="NavView"
                          PaneDisplayMode="Top"
                          IsBackButtonVisible="False"
@@ -19,6 +19,7 @@
                          SelectionChanged="NavView_SelectionChanged">
         <ui:FANavigationView.MenuItems>
             <ui:FANavigationViewItem Content="首页" Tag="home"/>
+            <ui:FANavigationViewItem Content="插件" Tag="plugins"/>
             <ui:FANavigationViewItem Content="设置" Tag="settings"/>
         </ui:FANavigationView.MenuItems>
     </ui:FANavigationView>

@@ -27,6 +27,29 @@ namespace DSH_Launcher.Services
         AppWebView = 1,
     }
 
+    /// <summary>
+    /// 插件目录来源。**不是 npm registry**:社区有两份并行的人工策展目录,启动器都支持:
+    /// <list type="bullet">
+    /// <item><c>awesome-dsh-plugin</c> —— 社区市场 dsh-market 的数据源
+    /// (https://awesome-dsh-plugin.com/plugins.json,顶层是对象 + <c>plugins</c> 数组)。</item>
+    /// <item><c>dsh-plugin.org</c> —— 插件中心 dsh-plugin-hub 的数据源
+    /// (https://api.dsh-plugin.org/plugins.zh.json,顶层是数组,字段是缩写)。
+    /// 两份目录的插件集合与字段都不同,结构由启动器自动识别。</item>
+    /// </list>
+    /// 枚举按**名字**解析(见 <see cref="LenientEnumConverter{T}"/>),所以调换数值不会读错已有设置。
+    /// </summary>
+    public enum PluginCatalogSource
+    {
+        /// <summary>awesome-dsh-plugin.com(dsh-market 的数据源),默认。</summary>
+        Official = 0,
+
+        /// <summary>dsh-plugin.org(dsh-plugin-hub 的数据源)。</summary>
+        DshPluginOrg = 1,
+
+        /// <summary>自建/第三方镜像,地址取 <see cref="AppSettings.PluginCatalogUrl"/>。</summary>
+        Custom = 2,
+    }
+
     /// <summary>应用设置(持久化为 JSON)。</summary>
     public sealed class AppSettings
     {
@@ -69,6 +92,13 @@ namespace DSH_Launcher.Services
         /// 仅在 <see cref="KeepWebViewAlive"/> 开启时有效。
         /// </summary>
         public int WebViewIdleTimeoutMinutes { get; set; }
+
+        /// <summary>插件目录来源,默认官方策展目录。</summary>
+        [JsonConverter(typeof(LenientEnumConverter<PluginCatalogSource>))]
+        public PluginCatalogSource PluginCatalog { get; set; } = PluginCatalogSource.Official;
+
+        /// <summary>自定义插件目录地址(<see cref="PluginCatalogSource.Custom"/> 时使用)。</summary>
+        public string PluginCatalogUrl { get; set; } = string.Empty;
 
         /// <summary>“保留超时”的默认值(分钟)。</summary>
         public const int DefaultWebViewIdleTimeoutMinutes = 5;
