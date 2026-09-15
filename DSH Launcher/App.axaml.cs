@@ -1,4 +1,5 @@
 using System;
+using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -18,11 +19,13 @@ public partial class App : Application
     /// <summary>true 表示用户已从托盘菜单选择退出,此时窗口关闭不再拦截。</summary>
     private bool _exitRequested;
 
-    // 单实例协调:互斥体占位 + 事件通知已有实例显示主界面
+    // 单实例协调:互斥体判定首个实例,命名管道通知已有实例显示主界面。
+    // 用命名管道而非命名 EventWaitHandle:后者仅 Windows 支持,macOS/Linux 上创建即抛
+    // PlatformNotSupportedException;命名管道全平台可用(Unix 上映射为 Unix 域套接字)。
     private const string SingleInstanceMutexName = "DSH_Launcher_SingleInstance";
-    private const string ShowMainWindowEventName = "DSH_Launcher_ShowMainWindow";
+    private const string ShowMainWindowPipeName = "DSH_Launcher_ShowMainWindow";
     private Mutex? _singleInstanceMutex;
-    private EventWaitHandle? _showMainWindowEvent;
+    private CancellationTokenSource? _showMainWindowPipeCts;
 
     public override void Initialize()
     {
@@ -43,28 +46,42 @@ public partial class App : Application
             // (macOS 上原生 Quit 会走 ShutdownRequested)。
             desktop.ShutdownRequested += (_, _) => WebOpener.BeginShutdown();
             desktop.ShutdownRequested += (_, _) => StopDshOnShutdown();
+            desktop.ShutdownRequested += (_, _) => _showMainWindowPipeCts?.Cancel();
 
-            // 单实例:已有实例在运行时,通知其显示主界面,然后退出当前进程
+            // macOS 点击 Dock 图标(Reopen)时恢复主窗口;Windows/Linux 不会触发该激活类型,无副作用
+            if (desktop is IActivatableLifetime activatable)
+            {
+                activatable.Activated += (_, e) =>
+                {
+                    if (e.Kind == ActivationKind.Reopen)
+                    {
+                        ShowMainWindow();
+                    }
+                };
+            }
+
+            // 单实例:已有实例在运行时,通过命名管道通知其显示主界面,然后退出当前进程
             _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
             if (!createdNew)
             {
                 try
                 {
-                    using var evt = EventWaitHandle.OpenExisting(ShowMainWindowEventName);
-                    evt.Set();
+                    // 连接上即视为"显示主界面"信号,无需写入数据
+                    using var client = new NamedPipeClientStream(".", ShowMainWindowPipeName, PipeDirection.Out);
+                    client.Connect(1000);
                     AppLogService.Write("[启动] 检测到已有实例,已通知其显示主界面");
                 }
                 catch (Exception)
                 {
-                    // 打开事件失败时直接退出,不影响已有实例
+                    // 连接失败(已有实例可能正在退出)时直接退出,不影响已有实例
                 }
 
                 Environment.Exit(0);
                 return;
             }
 
-            _showMainWindowEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowMainWindowEventName);
-            _ = Task.Run(WaitForShowMainWindowRequests);
+            _showMainWindowPipeCts = new CancellationTokenSource();
+            _ = Task.Run(() => ListenForShowMainWindowRequestsAsync(_showMainWindowPipeCts.Token));
 
             // 记录应用启动标记到文件日志(%LOCALAPPDATA%\DSH Launcher\Settings\app.log)
             AppLogService.MarkSessionStart();
@@ -145,12 +162,44 @@ public partial class App : Application
         Avalonia.Threading.Dispatcher.UIThread.Post(() => WebOpener.Open(action, url));
     }
 
-    /// <summary>后台等待“显示主界面”请求(来自二次启动的进程)。</summary>
-    private void WaitForShowMainWindowRequests()
+    /// <summary>
+    /// 后台监听"显示主界面"请求(来自二次启动的进程,经命名管道)。
+    /// 命名管道服务端一次只能服务一个连接,每接受一个连接就重建一次监听;
+    /// 连接本身即信号,无需读取数据。应用退出时由取消标记终止监听。
+    /// </summary>
+    private async Task ListenForShowMainWindowRequestsAsync(CancellationToken cancellationToken)
     {
-        while (_showMainWindowEvent is not null && _showMainWindowEvent.WaitOne())
+        while (!cancellationToken.IsCancellationRequested)
         {
-            Avalonia.Threading.Dispatcher.UIThread.Post(ShowMainWindow);
+            try
+            {
+                using var server = new NamedPipeServerStream(
+                    ShowMainWindowPipeName,
+                    PipeDirection.In,
+                    maxNumberOfServerInstances: 1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
+
+                await server.WaitForConnectionAsync(cancellationToken);
+                Avalonia.Threading.Dispatcher.UIThread.Post(ShowMainWindow);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                // 监听异常不致命:稍后重建管道重试;退避一下,避免高频失败刷满 CPU
+                AppLogService.Write($"[启动] 单实例管道监听异常: {ex.Message}");
+                try
+                {
+                    await Task.Delay(1000, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
         }
     }
 
@@ -291,6 +340,9 @@ public partial class App : Application
 
         // 退出前停止 dsh 服务进程
         DshService.Instance.Stop();
+
+        // 终止单实例管道监听(显式退出路径;ShutdownRequested 路径也已取消,此处幂等)
+        _showMainWindowPipeCts?.Cancel();
 
         _tray?.Dispose();
         _tray = null;
