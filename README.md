@@ -4,6 +4,8 @@
 
 它把 `dsh` 的安装、启停、Web 界面访问、插件管理这些命令行操作，收进一个常驻系统托盘的 WinUI 风格窗口里。
 
+![DSH Launcher 首页：服务运行中，底部实时显示 dsh web 的输出](docs/screenshots/home.png)
+
 ---
 
 ## 功能特性
@@ -38,13 +40,17 @@ WebView 做了两项体验优化：
   - 也支持手动输入包名/`github:owner/repo` 规格安装。
 - **安装输出**：浮动日志窗实时显示安装/卸载输出；安装开始时自动弹出，关闭后有新日志会显示未读小圆点。
 
+![插件页：已安装的插件与全部组合条目，顶部是批量操作栏](docs/screenshots/plugins-installed.png)
+
+![插件页：从社区目录浏览并安装新插件](docs/screenshots/plugins-catalog.png)
+
 ### 系统托盘
 - 单击 / 双击托盘图标可分别配置为：在 WebView 中打开、在浏览器中打开、显示主界面、无动作。
 - 关闭主窗口默认最小化到托盘（可配置为直接退出）。
 - 托盘右键菜单可控制服务启停与退出程序。
 
 ### 设置
-WinUI 卡片式设置页，分三组：
+WinUI 卡片式设置页，分四组：
 
 | 卡片 | 设置项 |
 |---|---|
@@ -54,6 +60,10 @@ WinUI 卡片式设置页，分三组：
 | **环境** | npm 源（使用配置源 / 官方 / npmmirror / 腾讯云 / 华为云）、HTTP 代理、不走代理的地址 |
 
 环境设置会注入到 `npm` / `pnpm` / `dsh plugin` 等子进程，以及插件目录下载所用的 HTTP 客户端；**不影响已在运行的服务**。
+
+![设置页：服务与环境](docs/screenshots/settings-service.png)
+
+![设置页：系统托盘与 WebView](docs/screenshots/settings-webview.png)
 
 ### 窗口状态记忆
 自动记住主窗口与 WebView 窗口的位置、尺寸、最大化状态，下次启动还原。
@@ -115,6 +125,8 @@ DSH Launcher/
     WindowStateService.cs         窗口位置/尺寸/最大化状态记忆
     TrayService.cs                系统托盘图标与交互
     AppLogService.cs              应用日志文件
+
+docs/screenshots/                 README 中使用的界面截图
 ```
 
 ---
