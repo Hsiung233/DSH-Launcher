@@ -160,3 +160,9 @@ docs/screenshots/                 README 中使用的界面截图
 - 界面框架：[Avalonia](https://avaloniaui.net/)
 - WinUI 风格控件：[FluentAvaloniaUI](https://github.com/amwx/FluentAvalonia)
 - 插件目录：[awesome-dsh-plugin](https://awesome-dsh-plugin.com/) · [dsh-plugin.org](https://dsh-plugin.org/)
+
+---
+
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。
