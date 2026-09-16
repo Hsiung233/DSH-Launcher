@@ -349,6 +349,8 @@ namespace DSH_Launcher.Services
             Process process;
             try
             {
+                // 这里**不**注入“环境设置”的代理:这是本机服务,WebView/浏览器要访问 127.0.0.1,
+                // 注入了代理反而会绕一圈甚至失败(npm 源同理,与运行服务无关)。
                 var psi = PlatformProcess.CreateShellStartInfo(
                     PlatformProcess.ShellCommandForExecutable(shimPath, this._lastRunArgs),
                     redirectOutput: true,
@@ -799,14 +801,24 @@ namespace DSH_Launcher.Services
         /// <summary>
         /// 静默执行一条命令行并捕获 stdout/stderr。
         /// Windows 走 cmd.exe /c,类 Unix 走登录 shell -lc(见 <see cref="PlatformProcess"/>)。
+        /// <para>
+        /// 统一注入“环境设置”(npm 源 / 代理,见 <see cref="ChildEnvironment"/>)——
+        /// 这里是**所有非 dsh web 子进程**的公共出口(npm 安装/查询、命令探测、dsh 子命令),
+        /// 所以只需在这一处注入,不必在每个调用点重复。
+        /// <c>dsh web</c> 服务进程**不**走这里(它要连本机 127.0.0.1,不该被代理接管)。
+        /// </para>
         /// </summary>
         /// <param name="rawByteOutput">
         /// 是否按“原样字节”收下输出,交给调用方用 <see cref="PlatformProcess.DecodeChildOutputLine"/> 判定编码。
         /// 凡输出会被展示或解析的路径都要传 true(Node 写 UTF-8、cmd 自身消息是 OEM 代码页,两者会混在一起)。
         /// </param>
         private static Process StartHidden(string command, bool rawByteOutput = false)
-            => Process.Start(PlatformProcess.CreateShellStartInfo(
-                command, redirectOutput: true, rawByteOutput: rawByteOutput))!;
+        {
+            var psi = PlatformProcess.CreateShellStartInfo(
+                command, redirectOutput: true, rawByteOutput: rawByteOutput);
+            ChildEnvironment.Apply(psi);
+            return Process.Start(psi)!;
+        }
 
         [GeneratedRegex(@"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d+(?:/[^\s""'<>]*)?", RegexOptions.IgnoreCase | RegexOptions.Compiled, "zh-CN")]
         private static partial Regex GetWebUrlRegex();

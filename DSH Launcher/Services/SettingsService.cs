@@ -51,6 +51,35 @@ namespace DSH_Launcher.Services
         DshPluginOrg = 1,
     }
 
+    /// <summary>
+    /// npm 源(registry)。设置页下拉框的索引与枚举值一一对应。
+    /// <list type="bullet">
+    /// <item><see cref="Config"/> = **不注入任何环境变量**,沿用用户自己的 .npmrc / 环境变量
+    /// (即“使用配置源”,默认)。</item>
+    /// <item>其余成员 = 已知的公共镜像,启动器会把地址注入子进程的 <c>npm_config_registry</c>,
+    /// npm 与 pnpm 都认这个变量(等价于 <c>--registry</c>,对 <c>dsh plugin</c> 转发的 pnpm 也生效)。</item>
+    /// </list>
+    /// 地址映射见 <see cref="ChildEnvironment.ResolveRegistry"/>。
+    /// 枚举按**名字**解析(见 <see cref="LenientEnumConverter{T}"/>),所以增删成员不会读错已有设置。
+    /// </summary>
+    public enum NpmRegistrySource
+    {
+        /// <summary>使用本机配置(.npmrc / 环境变量),不覆盖 registry,默认。</summary>
+        Config = 0,
+
+        /// <summary>npm 官方源(registry.npmjs.org)。</summary>
+        NpmOfficial = 1,
+
+        /// <summary>npmmirror(原淘宝源)。</summary>
+        Npmmirror = 2,
+
+        /// <summary>腾讯云 npm 镜像。</summary>
+        TencentCloud = 3,
+
+        /// <summary>华为云 npm 镜像。</summary>
+        HuaweiCloud = 4,
+    }
+
     /// <summary>应用设置(持久化为 JSON)。</summary>
     public sealed class AppSettings
     {
@@ -97,6 +126,23 @@ namespace DSH_Launcher.Services
         /// <summary>插件目录来源,默认 awesome-dsh-plugin。</summary>
         [JsonConverter(typeof(LenientEnumConverter<PluginCatalogSource>))]
         public PluginCatalogSource PluginCatalog { get; set; } = PluginCatalogSource.Official;
+
+        /// <summary>npm 源,默认“使用配置源”(不覆盖本机 .npmrc 里的 registry)。</summary>
+        [JsonConverter(typeof(LenientEnumConverter<NpmRegistrySource>))]
+        public NpmRegistrySource NpmRegistry { get; set; } = NpmRegistrySource.Config;
+
+        /// <summary>
+        /// 代理地址(如 <c>http://127.0.0.1:7890</c>),空 = 不使用代理。
+        /// 会注入 npm/pnpm 等子进程的 HTTP_PROXY/HTTPS_PROXY 与 npm_config_proxy,
+        /// 也用于插件目录下载的 HTTP 客户端。改写前先经 <see cref="ChildEnvironment.NormalizeProxyUrl"/> 归一化。
+        /// </summary>
+        public string ProxyUrl { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 不走代理的地址(逗号分隔的主机名或域名后缀,如 <c>localhost,127.0.0.1,.corp.com</c>),
+        /// 仅在使用代理时生效。对应 NO_PROXY / npm_config_noproxy。
+        /// </summary>
+        public string NoProxy { get; set; } = string.Empty;
 
         /// <summary>“保留超时”的默认值(分钟)。</summary>
         public const int DefaultWebViewIdleTimeoutMinutes = 5;

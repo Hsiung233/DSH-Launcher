@@ -313,12 +313,39 @@ namespace DSH_Launcher.Services
         /// <summary>
         /// 拉取插件目录用的 HTTP 客户端。设置 User-Agent:部分 CDN/镜像会拒绝没有 UA 的请求。
         /// 目录 3-7MB,给 60 秒超时。
+        /// <para>
+        /// ⚠ 它是**按代理设置现取**的:代理/不走代理列表一变就重建客户端
+        /// (子进程的环境变量对进程内的 HttpClient 无效,只能建在 handler 上;而设置改了不该要求重启应用)。
+        /// </para>
         /// </summary>
-        private static readonly HttpClient Http = CreateHttpClient();
+        private static readonly object HttpSync = new();
+        private static HttpClient? _http;
+        private static string _httpProxyKey = string.Empty;
+
+        private static HttpClient Http => GetHttpClient();
+
+        private static HttpClient GetHttpClient()
+        {
+            var key = ChildEnvironment.ProxyKey();
+            lock (HttpSync)
+            {
+                if (_http is null || !string.Equals(key, _httpProxyKey, StringComparison.Ordinal))
+                {
+                    _http?.Dispose();
+                    _http = CreateHttpClient();
+                    _httpProxyKey = key;
+                }
+
+                return _http;
+            }
+        }
 
         private static HttpClient CreateHttpClient()
         {
-            var client = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            var handler = new HttpClientHandler();
+            ChildEnvironment.ApplyProxy(handler);
+
+            var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60) };
             client.DefaultRequestHeaders.UserAgent.ParseAdd("DSH-Launcher/1.0");
             return client;
         }
@@ -1402,6 +1429,9 @@ namespace DSH_Launcher.Services
                 // pnpm 是 Node 程序、写 UTF-8;cmd 自身消息是 OEM 代码页 —— 原样收下再逐行判定
                 var startInfo = PlatformProcess.CreateShellStartInfo(
                     command, redirectOutput: true, rawByteOutput: true);
+
+                // npm 源 / 代理:探测包管理器时也保持一致(否则“探测失败但手工命令可用”的报错会莫名奇妙)
+                ChildEnvironment.Apply(startInfo);
 
                 using var process = new Process { StartInfo = startInfo };
                 process.Start();
