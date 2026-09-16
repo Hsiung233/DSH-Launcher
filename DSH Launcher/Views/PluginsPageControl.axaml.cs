@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Threading;
 using DSH_Launcher.Services;
 
@@ -51,6 +54,12 @@ namespace DSH_Launcher.Views
 
         /// <summary>正在读取插件清单(与服务的忙碌状态共同决定进度环与按钮可用性)。</summary>
         private bool _loading;
+
+        /// <summary>右列「全部组合条目」当前实际显示的条目(受筛选框影响),批量选择以它为准。</summary>
+        private IReadOnlyList<PluginEntry> _entriesView = [];
+
+        /// <summary>已订阅选中态变化的条目(每次刷新重建,用于退订)。</summary>
+        private readonly List<PluginEntry> _observedEntries = [];
 
         /// <summary>卸载的二次确认状态(点击「卸载」→ 变成「确认卸载」,5 秒内再点才真的卸载)。</summary>
         private string? _pendingUninstall;
@@ -150,6 +159,9 @@ namespace DSH_Launcher.Views
 
         private void ApplySnapshot(PluginSnapshot snapshot)
         {
+            // 选中态存在 PluginEntry 上,刷新后是新对象 —— 先把旧的监听退掉并重新监听新的
+            this.ObserveSelection(snapshot);
+
             // ① 已安装的插件
             this.InstalledPluginsList.ItemsSource = snapshot.Installed;
             this.InstalledCountText.Text = snapshot.Installed.Count == 0 ? string.Empty : $"{snapshot.Installed.Count} 个";
@@ -193,12 +205,231 @@ namespace DSH_Launcher.Views
             var all = this._snapshot?.AllEntries ?? (IReadOnlyList<PluginEntry>)[];
             var filter = this.EntryFilterBox.Text?.Trim() ?? string.Empty;
 
-            this.AllEntriesList.ItemsSource = filter.Length == 0
+            var view = filter.Length == 0
                 ? all
                 : all.Where(entry =>
                         entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
                         || entry.Id.Contains(filter, StringComparison.OrdinalIgnoreCase))
                     .ToList();
+
+            // 记下当前显示的这批:批量选择/全选都以“看得见的”为准
+            this._entriesView = view;
+            this.AllEntriesList.ItemsSource = view;
+            this.UpdateBatchBar();
+        }
+
+        /// <summary>
+        /// 监听所有条目的选中态变化,以便实时刷新批量操作栏。
+        /// 每次刷新会重建条目对象,所以先退订上一批再订新的(每次全量重建,数量只有百级,开销可忽略)。
+        /// </summary>
+        private void ObserveSelection(PluginSnapshot snapshot)
+        {
+            foreach (var entry in this._observedEntries)
+            {
+                entry.PropertyChanged -= this.OnEntryPropertyChanged;
+            }
+
+            this._observedEntries.Clear();
+
+            // 两份列表会共享同一批实例(左列是从右列里筛出来的),用引用去重避免重复订阅
+            var seen = new HashSet<PluginEntry>();
+            foreach (var entry in snapshot.Installed.Concat(snapshot.AllEntries))
+            {
+                if (seen.Add(entry))
+                {
+                    this._observedEntries.Add(entry);
+                }
+            }
+
+            foreach (var entry in this._observedEntries)
+            {
+                entry.PropertyChanged += this.OnEntryPropertyChanged;
+            }
+        }
+
+        private void OnEntryPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(PluginEntry.IsSelected))
+            {
+                this.UpdateBatchBar();
+            }
+        }
+
+        /// <summary>当前两列里可见的全部条目(左列已安装 + 右列筛选后的组合条目),去重。</summary>
+        private List<PluginEntry> VisibleEntries()
+        {
+            var seen = new HashSet<PluginEntry>();
+            var result = new List<PluginEntry>();
+            foreach (var entry in (this._snapshot?.Installed ?? []).Concat(this._entriesView))
+            {
+                if (seen.Add(entry))
+                {
+                    result.Add(entry);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 刷新批量操作栏:计数、按能力启用/禁用按钮、同步「全选」的勾选态。
+        /// 每次勾选都重扫一遍(百级数据,很便宜),不维护增量计数 —— 增量计数容易跟筛选/刷新脱节。
+        /// </summary>
+        private void UpdateBatchBar()
+        {
+            var visible = this.VisibleEntries();
+            var selected = visible.Where(entry => entry.IsSelected).ToList();
+
+            var toggleable = selected.Count(entry => entry.CanToggle);
+            var resettable = selected.Count(entry => entry.HasOverride);
+            var uninstallable = selected.Count(entry => entry.CanUninstall);
+
+            this.BatchCountText.Text = selected.Count == 0
+                ? "未选择任何条目"
+                : $"已选 {selected.Count} 项 · 可启停 {toggleable} · 可恢复 {resettable} · 可卸载 {uninstallable}";
+
+            this.BatchEnableButton.IsEnabled = toggleable > 0;
+            this.BatchDisableButton.IsEnabled = toggleable > 0;
+            this.BatchResetButton.IsEnabled = resettable > 0;
+            this.BatchUninstallButton.IsEnabled = uninstallable > 0;
+
+            ToolTip.SetTip(this.BatchEnableButton, toggleable == 0
+                ? "所选条目里没有可启停的(需出现在组合树里)"
+                : $"对所选中的 {toggleable} 个条目写入 disabled: false");
+            ToolTip.SetTip(this.BatchDisableButton, toggleable == 0
+                ? "所选条目里没有可启停的(需出现在组合树里)"
+                : $"对所选中的 {toggleable} 个条目写入 disabled: true");
+            ToolTip.SetTip(this.BatchResetButton, resettable == 0
+                ? "所选条目里没有启动器写入的启停覆盖"
+                : $"删除所选中的 {resettable} 个条目的启停覆盖");
+            ToolTip.SetTip(this.BatchUninstallButton, uninstallable == 0
+                ? "所选条目里没有可卸载的(只有已安装到 profile 的包能卸载)"
+                : $"从 profile 移除所选中的 {uninstallable} 个包");
+
+            // 勾选态同步到「全选」;用 Click 而不是 Checked/Unchecked,避免这里的赋值又触发一次全选
+            this.SelectAllBox.IsChecked = visible.Count > 0 && selected.Count == visible.Count;
+        }
+
+        /// <summary>全选 / 取消全选:作用于当前列表(左右两列已可见的条目)。</summary>
+        private void OnSelectAllClick(object? sender, RoutedEventArgs e)
+        {
+            var select = this.SelectAllBox.IsChecked == true;
+            foreach (var entry in this.VisibleEntries())
+            {
+                entry.IsSelected = select;
+            }
+
+            this.UpdateBatchBar();
+        }
+
+        private async void OnBatchEnableClick(object? sender, RoutedEventArgs e) => await this.ApplyBatchToggleAsync(true);
+
+        private async void OnBatchDisableClick(object? sender, RoutedEventArgs e) => await this.ApplyBatchToggleAsync(false);
+
+        /// <summary>批量启用/禁用:服务层一次写完 cordis.patch.yml,最后只刷新一次列表。</summary>
+        private async Task ApplyBatchToggleAsync(bool enabled)
+        {
+            var ids = this.VisibleEntries()
+                .Where(entry => entry.IsSelected && entry.CanToggle)
+                .Select(entry => entry.Id)
+                .ToList();
+
+            if (ids.Count == 0)
+            {
+                return;
+            }
+
+            this._plugins.SetEnabledBatch(ids, enabled);
+            await this.RefreshAsync();
+        }
+
+        private async void OnBatchResetClick(object? sender, RoutedEventArgs e)
+        {
+            var ids = this.VisibleEntries()
+                .Where(entry => entry.IsSelected && entry.HasOverride)
+                .Select(entry => entry.Id)
+                .ToList();
+
+            if (ids.Count == 0)
+            {
+                return;
+            }
+
+            this._plugins.ClearOverridesBatch(ids);
+            await this.RefreshAsync();
+        }
+
+        /// <summary>
+        /// 批量卸载:破坏性操作,所以用对话框列出**具体要卸载的包**再确认
+        /// (逐条卸载那套“再点一次确认”不适合一次 N 个的场景)。
+        /// </summary>
+        private async void OnBatchUninstallClick(object? sender, RoutedEventArgs e)
+        {
+            var names = this.VisibleEntries()
+                .Where(entry => entry.IsSelected && entry.CanUninstall)
+                .Select(entry => entry.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (names.Count == 0)
+            {
+                return;
+            }
+
+            var confirmed = await this.ConfirmBatchUninstallAsync(names);
+            if (!confirmed)
+            {
+                return;
+            }
+
+            await this._plugins.UninstallBatchAsync(names);
+            await this.RefreshAsync();
+        }
+
+        /// <summary>弹出确认对话框,列出即将卸载的包;返回是否确认。</summary>
+        private async Task<bool> ConfirmBatchUninstallAsync(IReadOnlyList<string> names)
+        {
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel is not Window owner)
+            {
+                return false;
+            }
+
+            var dialog = new FluentAvalonia.UI.Controls.FAContentDialog
+            {
+                Title = $"卸载 {names.Count} 个插件?",
+                Content = new StackPanel
+                {
+                    Spacing = 8,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "会从 profile 的 dependencies 里移除下面这些包(不可撤销):",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                        new ScrollViewer
+                        {
+                            MaxHeight = 200,
+                            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                            Content = new SelectableTextBlock
+                            {
+                                Text = string.Join(Environment.NewLine, names),
+                                TextWrapping = TextWrapping.Wrap,
+                                FontFamily = new FontFamily("Consolas"),
+                                FontSize = 12,
+                            },
+                        },
+                    },
+                },
+                PrimaryButtonText = $"卸载 {names.Count} 个",
+                CloseButtonText = "取消",
+                DefaultButton = FluentAvalonia.UI.Controls.FAContentDialogButton.None,
+            };
+
+            var result = await dialog.ShowAsync(owner);
+            return result == FluentAvalonia.UI.Controls.FAContentDialogResult.Primary;
         }
 
         private void UpdateBusy()

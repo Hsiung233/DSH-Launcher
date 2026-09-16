@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -15,9 +16,38 @@ namespace DSH_Launcher.Services
     /// 一个插件条目。两种来源合并成同一份列表:
     /// ① profile 的 <c>package.json</c> 里 <c>dependencies</c> 声明的包(用户安装的插件,可卸载);
     /// ② <c>dsh --dump-config</c> 组合出来的 Loader 条目(带条目 id,可启用/禁用)。
+    /// <para>
+    /// ⚠ 实现 <see cref="INotifyPropertyChanged"/> 是为了批量选择的 <see cref="IsSelected"/>:
+    /// 两个列表都是**虚拟化**的(`ItemsControl` + `VirtualizingStackPanel` 会回收容器),
+    /// 把选中态存在容器/控件上是错的 —— 必须存在数据对象上才能跨回收存活。
+    /// </para>
     /// </summary>
-    public sealed class PluginEntry
+    public sealed class PluginEntry : INotifyPropertyChanged
     {
+        private bool _isSelected;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        /// <summary>
+        /// 批量操作是否勾选了这个条目(仅界面状态,不影响 profile)。
+        /// 注意:「已安装」左列与「全部组合条目」右列**共用同一批实例**
+        /// (左列是从右列里筛出 IsInstalled 的),所以两边勾选状态天然同步。
+        /// </summary>
+        public bool IsSelected
+        {
+            get => this._isSelected;
+            set
+            {
+                if (this._isSelected == value)
+                {
+                    return;
+                }
+
+                this._isSelected = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.IsSelected)));
+            }
+        }
+
         /// <summary>Loader 条目 id(用于 cordis.patch.yml 的启停覆盖);不在组合树里时为空。</summary>
         public string Id { get; init; } = string.Empty;
 
@@ -924,6 +954,92 @@ namespace DSH_Launcher.Services
                 this.AppendSystemLog($"恢复默认启停失败: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// 批量启用/禁用。**只读一次、只写一次 <c>cordis.patch.yml</c>** ——
+        /// 逐条调 <see cref="SetEnabled"/> 会把整个文件重写 N 次(152 条就是 152 次)。
+        /// </summary>
+        public bool SetEnabledBatch(IReadOnlyCollection<string> ids, bool enabled)
+        {
+            var targets = ids.Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+            if (targets.Count == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                var overrides = ReadOverrides();
+                foreach (var id in targets)
+                {
+                    overrides[id] = !enabled;
+                }
+
+                WriteOverrides(overrides);
+                this.AppendSystemLog($"批量{(enabled ? "启用" : "禁用")} {targets.Count} 个条目"
+                    + $"(已写入 {PatchFilePath},重启或重载 dsh 后生效)");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                this.AppendSystemLog($"批量写启停覆盖失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>批量恢复默认:一次摘掉多个 id 的覆盖(同样是只写一次文件)。</summary>
+        public bool ClearOverridesBatch(IReadOnlyCollection<string> ids)
+        {
+            var targets = ids.Where(id => id.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+            if (targets.Count == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                var overrides = ReadOverrides();
+                var removed = targets.Count(id => overrides.Remove(id));
+                WriteOverrides(overrides);
+                this.AppendSystemLog($"已恢复 {removed} 个条目的默认启停状态");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                this.AppendSystemLog($"批量恢复默认失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 批量卸载:逐个交给 <c>dsh plugin remove</c>(逐个执行,不因为中途失败而放弃后面的),
+        /// 返回成功的个数。调用方在全部结束后**刷新一次**即可,不必每条都刷。
+        /// </summary>
+        public async Task<int> UninstallBatchAsync(IReadOnlyCollection<string> packageNames)
+        {
+            var targets = packageNames
+                .Where(name => name.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (targets.Count == 0)
+            {
+                return 0;
+            }
+
+            this.AppendSystemLog($"开始批量卸载 {targets.Count} 个插件: {string.Join(", ", targets)}");
+            var succeeded = 0;
+            foreach (var name in targets)
+            {
+                if (await this.UninstallAsync(name))
+                {
+                    succeeded++;
+                }
+            }
+
+            this.AppendSystemLog($"批量卸载结束:成功 {succeeded} / {targets.Count}");
+            return succeeded;
         }
 
         /// <summary>探测 pnpm 是否可用(安装/卸载都由 dsh plugin 转发给 pnpm)。</summary>

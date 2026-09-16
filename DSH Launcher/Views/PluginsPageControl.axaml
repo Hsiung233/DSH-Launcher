@@ -27,13 +27,20 @@
             </ItemsPanelTemplate>
 
             <!-- 插件行:已安装列表与“全部组合条目”共用同一套模板。
-                 右边距 16:Fluent 的滚动条是 overlay(画在内容之上),只留 8 会压住行尾的按钮 -->
+                 右边距 16:Fluent 的滚动条是 overlay(画在内容之上),只留 8 会压住行尾的按钮。
+                 最左是批量选择框:绑定在数据对象的 IsSelected 上 ——
+                 列表是虚拟化的(容器会被回收),勾选态存在行上会错位 -->
             <DataTemplate x:Key="PluginRowTemplate" x:DataType="svc:PluginEntry">
                 <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="0,0,0,1"
                         Padding="0 8 16 8">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                        <StackPanel Grid.Column="0" Spacing="2">
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                        <CheckBox Grid.Column="0"
+                                  VerticalAlignment="Center"
+                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                  ToolTip.Tip="勾选后可批量启用/禁用/恢复默认/卸载"/>
+
+                        <StackPanel Grid.Column="1" Spacing="2">
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock Text="{Binding Name}"
                                            FontWeight="SemiBold"
@@ -55,7 +62,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1"
+                        <StackPanel Grid.Column="2"
                                     Orientation="Horizontal"
                                     Spacing="8"
                                     VerticalAlignment="Center">
@@ -345,13 +352,64 @@
                  隐藏的那一半 IsVisible=false,其控件不在 UIA 树里) -->
             <Grid Grid.Column="1">
 
-                <!-- 已安装视图:两列(已安装 | 全部组合条目) -->
+                <!-- 已安装视图:批量操作栏(跨两列) + 两列(已安装 | 全部组合条目) -->
                 <Grid x:Name="InstalledView"
+                      RowDefinitions="Auto,*"
+                      RowSpacing="12"
                       ColumnDefinitions="*,*"
                       ColumnSpacing="12">
 
+                    <!-- 批量操作栏:勾选行左边的选择框后在这里统一操作。
+                         勾选态存在 PluginEntry 上,所以左右两列(共用同一批实例)天然同步 -->
+                    <Border Grid.Row="0"
+                            Grid.ColumnSpan="2"
+                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12 8">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="12">
+                            <CheckBox x:Name="SelectAllBox"
+                                      Grid.Column="0"
+                                      VerticalAlignment="Center"
+                                      Content="全选"
+                                      Click="OnSelectAllClick"
+                                      ToolTip.Tip="全选/取消全选**当前列表里的条目**(左右两列一起算;若先筛选则只选筛出来的)"/>
+
+                            <TextBlock x:Name="BatchCountText"
+                                       Grid.Column="1"
+                                       VerticalAlignment="Center"
+                                       FontSize="12"
+                                       Opacity="0.7"
+                                       Text="未选择任何条目"/>
+
+                            <StackPanel Grid.Column="3"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        VerticalAlignment="Center">
+                                <Button x:Name="BatchEnableButton"
+                                        Content="批量启用"
+                                        IsEnabled="False"
+                                        Click="OnBatchEnableClick"/>
+                                <Button x:Name="BatchDisableButton"
+                                        Content="批量禁用"
+                                        IsEnabled="False"
+                                        Click="OnBatchDisableClick"/>
+                                <Button x:Name="BatchResetButton"
+                                        Content="恢复默认"
+                                        IsEnabled="False"
+                                        Click="OnBatchResetClick"/>
+                                <Button x:Name="BatchUninstallButton"
+                                        Content="批量卸载"
+                                        IsEnabled="False"
+                                        Click="OnBatchUninstallClick"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
                     <!-- 左列:已安装的插件(dsh.profile 的 dependencies) -->
-                    <Border Grid.Column="0"
+                    <Border Grid.Row="1"
+                            Grid.Column="0"
                             Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
@@ -404,7 +462,8 @@
 
                     <!-- 右列:全部组合条目(原来是折叠 Expander,两列布局下改成常显卡片:
                          它占满整列,折叠起来只会留一片空白) -->
-                    <Border Grid.Column="1"
+                    <Border Grid.Row="1"
+                            Grid.Column="1"
                             Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
