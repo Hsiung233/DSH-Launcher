@@ -24,11 +24,30 @@ namespace DSH_Launcher.Views
         /// <summary>本次会话已拉到的插件目录(为空 = 还没拉过)。</summary>
         private PluginCatalog? _catalog;
 
-        /// <summary>正在拉取插件目录。</summary>
-        private bool _catalogLoading;
+        /// <summary>正在拉取目录的地址;null = 当前没有在拉的请求(用于忙碌状态与同地址去重)。</summary>
+        private string? _catalogLoadingUrl;
+
+        /// <summary>
+        /// 目录请求的世代号。
+        /// <para>
+        /// ⚠ 为什么必须有它:目录拉取要 0.1-8 秒,用户完全可能在这个窗口里再切来源。
+        /// 没有它就会出现“慢的旧来源最后落地”,列表显示 A 而下拉已经是 B。
+        /// 每次发起新请求(或命中缓存直接显示)都自增,回调里发现自己的号过期就丢弃结果。
+        /// 旧结果虽然不显示,但已经被服务层缓存了,下次切回来是瞬时的。
+        /// </para>
+        /// </summary>
+        private int _catalogRequestId;
 
         /// <summary>回填下拉框/文本框或重建分类列表时置位,避免把回填当成用户操作。</summary>
         private bool _initializing;
+
+        /// <summary>
+        /// 页面已就绪(首次进页面、设置已回填完)。
+        /// ⚠ 必须有它:Avalonia 的 ComboBox 会在构造时**自动选中第 0 项**,
+        /// 那个 SelectionChanged 发生在 <see cref="OnPageAttached"/> 之前,`_initializing` 还没来得及置位,
+        /// 结果会被当成用户操作把设置写回去(实测把用户的 dsh-plugin.org 静默改成 Official)。
+        /// </summary>
+        private bool _pageReady;
 
         /// <summary>正在读取插件清单(与服务的忙碌状态共同决定进度环与按钮可用性)。</summary>
         private bool _loading;
@@ -43,9 +62,28 @@ namespace DSH_Launcher.Views
             InitializeComponent();
             AttachedToVisualTree += this.OnPageAttached;
 
+            // Esc 关闭输出浮窗。用**隧道**阶段先拿到并标记已处理:
+            // 本页之外(FluentAvalonia 的 FANavigationView)也用了 Esc,不能让它抢走。
+            this.AddHandler(KeyDownEvent, this.OnPagePreviewKeyDown, RoutingStrategies.Tunnel);
+
             this._plugins.LogAppended += this.OnPluginLogAppended;
             this._plugins.LogsCleared += this.OnPluginLogsCleared;
             this._plugins.StateChanged += this.OnPluginStateChanged;
+        }
+
+        /// <summary>
+        /// 浮窗开着时按 Esc 关掉它,并阻止事件继续传播(否则会冒泡到导航控件)。
+        /// 浮窗没开时**不处理**,保持应用原有的 Esc 行为不变。
+        /// </summary>
+        private void OnPagePreviewKeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Escape || !this.PluginLogFlyout.IsVisible)
+            {
+                return;
+            }
+
+            this.SetPluginLogVisible(false);
+            e.Handled = true;
         }
 
         /// <summary>进入页面时回填设置并后台读取插件清单(不阻塞首屏)。
@@ -55,23 +93,32 @@ namespace DSH_Launcher.Views
             this._initializing = true;
             try
             {
-                var settings = SettingsService.Instance.Settings;
-                this.CatalogSourceCombo.SelectedIndex = (int)settings.PluginCatalog;
-                this.CatalogUrlBox.Text = settings.PluginCatalogUrl;
+                this.CatalogSourceCombo.SelectedIndex = (int)SettingsService.Instance.Settings.PluginCatalog;
             }
             finally
             {
                 this._initializing = false;
             }
 
-            this.UpdateCatalogSourceUi();
+            // 默认停在「已安装」;不写在 XAML 里是因为 SelectedIndex 会在 InitializeComponent 期间
+            // 触发 SelectionChanged,那时 InstallView/InstalledView 字段还没赋值。
+            // 只在首次进入时赋默认值,这样同一次运行内切页再回来还记得上次的视图。
+            if (this.PluginsViewList.SelectedIndex < 0)
+            {
+                this.PluginsViewList.SelectedIndex = 0;
+            }
+
+            this.ApplyView();
             _ = this.RefreshAsync();
 
-            // 首次进入时若已经停在安装页签(比如用户上次就在这),也要把目录拉起来
-            if (this.PluginsTabs.SelectedIndex == InstallTabIndex)
+            // 首次进入时若已经停在安装视图(比如用户上次就在这),也要把目录拉起来
+            if (this.PluginsViewList.SelectedIndex == InstallViewIndex)
             {
                 _ = this.EnsureCatalogAsync();
             }
+
+            // 回填完毕:之后的 SelectionChanged 才算用户操作(见 _pageReady 注释)
+            this._pageReady = true;
         }
 
         /// <summary>重新读取 profile 清单与组合树,刷新全部列表。</summary>
@@ -156,7 +203,7 @@ namespace DSH_Launcher.Views
 
         private void UpdateBusy()
         {
-            var busy = this._loading || this._catalogLoading || this._plugins.IsBusy;
+            var busy = this._loading || this._catalogLoadingUrl is not null || this._plugins.IsBusy;
             this.PluginsProgress.IsActive = busy;
             this.RefreshPluginsButton.IsEnabled = !busy;
             this.RevealProfileButton.IsEnabled = !busy;
@@ -164,9 +211,9 @@ namespace DSH_Launcher.Views
             this.InstallPluginButton.IsEnabled = !busy;
         }
 
-        /// <summary>空态里的「去安装新插件」:切到第 2 个页签(0=已安装,1=安装新插件)。</summary>
+        /// <summary>空态里的「去安装新插件」:切到第 2 个视图(0=已安装,1=安装新插件)。</summary>
         private void OnGoToInstallTabClick(object? sender, RoutedEventArgs e)
-            => this.PluginsTabs.SelectedIndex = 1;
+            => this.PluginsViewList.SelectedIndex = InstallViewIndex;
 
         /// <summary>启用/禁用条目:「禁用」写入 disabled 覆盖,已是禁用则写回启用。</summary>
         private async void OnToggleEntryClick(object? sender, RoutedEventArgs e)
@@ -240,50 +287,105 @@ namespace DSH_Launcher.Views
 
         private void OnRevealProfileClick(object? sender, RoutedEventArgs e) => this._plugins.OpenProfileDirectory();
 
-        /// <summary>「安装新插件」页签的下标(0=已安装,1=安装新插件)。</summary>
-        private const int InstallTabIndex = 1;
+        /// <summary>「安装新插件」视图的下标(0=已安装,1=安装新插件)。</summary>
+        private const int InstallViewIndex = 1;
 
         /// <summary>
-        /// 页签切换:首次进「安装新插件」时才拉目录(约 3MB,不必在打开插件页时就下载)。
-        /// 之后切回来命中的是内存里的那份,不会重复下载。
+        /// 视图切换:右栏两个面板二选一,左栏只显示当前视图用得上的选项。
+        /// 隐藏的面板 IsVisible=false,其中的控件不在 UIA 树里。
         /// </summary>
-        private void OnPluginsTabChanged(object? sender, SelectionChangedEventArgs e)
+        private void OnPluginsViewChanged(object? sender, SelectionChangedEventArgs e)
         {
-            if (this.PluginsTabs.SelectedIndex == InstallTabIndex && this._catalog is null)
+            this.ApplyView();
+
+            // 首次进「安装新插件」时才拉目录(3-7MB,不必在打开插件页时就下载);
+            // 之后切回来命中的是内存里的那份,不会重复下载
+            if (this.PluginsViewList.SelectedIndex == InstallViewIndex && this._catalog is null)
             {
                 _ = this.EnsureCatalogAsync();
             }
         }
 
-        /// <summary>拉取策展目录并刷新列表。已有内存缓存时不会重新下载(forceReload=true 才会)。</summary>
+        /// <summary>按当前视图切换右栏面板与左栏选项的可见性。</summary>
+        private void ApplyView()
+        {
+            var install = this.PluginsViewList.SelectedIndex == InstallViewIndex;
+            this.InstallView.IsVisible = install;
+            this.InstalledView.IsVisible = !install;
+            this.CatalogOptionsPanel.IsVisible = install;
+            this.ManualInstallPanel.IsVisible = install;
+            this.EntriesFilterPanel.IsVisible = !install;
+        }
+
+        /// <summary>
+        /// 拉取策展目录并刷新列表。
+        /// <list type="bullet">
+        /// <item>已有该来源的缓存(在服务层,键是地址)→ 立即显示,切换来源是瞬时的。</item>
+        /// <item>同一地址已在拉取 → 不重复发起(但用户又切了来源会另发起,见下)。</item>
+        /// <item>每次发起都取新世代号,回调时过期则丢弃 —— 避免慢的旧来源覆盖快的新来源。</item>
+        /// </list>
+        /// </summary>
         private async Task EnsureCatalogAsync(bool forceReload = false)
         {
-            if (this._catalogLoading)
+            var url = PluginService.ResolveCatalogUrl();
+
+            // ① 命中缓存:立即显示。
+            //    这里也要自增世代号 —— 否则“A→B→A”时,A 命中缓存秒显,
+            //    随后在飞的 B 请求完成(号还等于当前号)会把列表改成 B。
+            if (!forceReload && PluginService.Instance.GetCachedCatalog(url) is { } cached)
+            {
+                this._catalogRequestId++;
+                this._catalogLoadingUrl = null;
+                this._catalog = cached;
+                this.ApplyCatalog(cached);
+                this.UpdateBusy();
+                return;
+            }
+
+            // ② 同一地址已在拉取且不是强制刷新 → 不重复发起
+            if (!forceReload && string.Equals(this._catalogLoadingUrl, url, StringComparison.Ordinal))
             {
                 return;
             }
 
-            this._catalogLoading = true;
+            var requestId = ++this._catalogRequestId;
+            this._catalogLoadingUrl = url;
             this.UpdateBusy();
             this.CatalogStatusText.Text = "正在读取插件目录…";
             try
             {
                 var catalog = await PluginService.Instance.LoadCatalogAsync(forceReload);
+
+                // 期间用户又切了来源 / 又点过刷新 → 丢弃本次结果(服务层已缓存,切回来即命中)
+                if (requestId != this._catalogRequestId)
+                {
+                    return;
+                }
+
                 this._catalog = catalog;
                 this.ApplyCatalog(catalog);
             }
             catch (Exception ex)
             {
+                if (requestId != this._catalogRequestId)
+                {
+                    return;
+                }
+
                 // 上游刻意不拿旧数据冒充答案:这里也不回退缓存,直接把原因显示出来
                 this.CatalogStatusText.Text =
                     $"读取插件目录失败:{ex.Message}{Environment.NewLine}"
-                    + $"地址:{PluginService.ResolveCatalogUrl()}{Environment.NewLine}"
-                    + "可检查网络后点「刷新目录」;若本机访问不了官方站点,可把来源改成自建镜像。";
+                    + $"地址:{url}{Environment.NewLine}"
+                    + "可检查网络后点「刷新目录」重试。";
             }
             finally
             {
-                this._catalogLoading = false;
-                this.UpdateBusy();
+                // 只有还是最新那次请求才收尾;被顶替的请求不动状态(状态已归新请求所有)
+                if (requestId == this._catalogRequestId)
+                {
+                    this._catalogLoadingUrl = null;
+                    this.UpdateBusy();
+                }
             }
         }
 
@@ -365,53 +467,28 @@ namespace DSH_Launcher.Views
 
         private void OnRefreshCatalogClick(object? sender, RoutedEventArgs e) => _ = this.EnsureCatalogAsync(true);
 
-        /// <summary>目录来源下拉框变更:保存设置、同步地址框,并重新拉取(地址变了,旧缓存作废)。</summary>
+        /// <summary>
+        /// 目录来源下拉框变更:保存设置并加载新来源。
+        /// **不传 forceReload** —— 已拉过的来源直接命中缓存、瞬时显示;
+        /// 想强制重拉请用「刷新目录」按钮。
+        /// </summary>
         private void OnCatalogSourceChanged(object? sender, SelectionChangedEventArgs e)
         {
-            this.UpdateCatalogSourceUi();
-            if (this._initializing || this.CatalogSourceCombo.SelectedIndex < 0)
+            // _pageReady:构造期的自动选中不算用户操作(见 _pageReady 注释)
+            if (!this._pageReady || this._initializing || this.CatalogSourceCombo.SelectedIndex < 0)
             {
                 return;
             }
 
             var source = (PluginCatalogSource)this.CatalogSourceCombo.SelectedIndex;
+            if (SettingsService.Instance.Settings.PluginCatalog == source)
+            {
+                return;
+            }
+
             SettingsService.Instance.Update(s => s.PluginCatalog = source);
-            this.UpdateCatalogSourceUi();
-
-            if (this.CatalogUrlBox.IsVisible && string.IsNullOrWhiteSpace(this.CatalogUrlBox.Text))
-            {
-                // 还没填镜像地址:不拉,给出提示
-                this.CatalogStatusText.Text = "已选择自定义镜像,但地址为空。请填入返回同结构 plugins.json 的地址。";
-                return;
-            }
-
-            _ = this.EnsureCatalogAsync(true);
+            _ = this.EnsureCatalogAsync();
         }
-
-        private void OnCatalogUrlLostFocus(object? sender, RoutedEventArgs e)
-        {
-            if (this._initializing)
-            {
-                return;
-            }
-
-            var value = this.CatalogUrlBox.Text?.Trim() ?? string.Empty;
-            if (SettingsService.Instance.Settings.PluginCatalogUrl == value)
-            {
-                return;
-            }
-
-            SettingsService.Instance.Update(s => s.PluginCatalogUrl = value);
-            this.UpdateCatalogSourceUi();
-            if (this.CatalogSourceCombo.SelectedIndex == (int)PluginCatalogSource.Custom && value.Length > 0)
-            {
-                _ = this.EnsureCatalogAsync(true);
-            }
-        }
-
-        /// <summary>自定义镜像时才显示地址框(平时不占一行高度)。</summary>
-        private void UpdateCatalogSourceUi()
-            => this.CatalogUrlBox.IsVisible = this.CatalogSourceCombo.SelectedIndex == (int)PluginCatalogSource.Custom;
 
         /// <summary>目录条目行上的「安装」:按目录给的规格装,失败自动回退到预构建 tarball。</summary>
         private async void OnInstallCatalogEntryClick(object? sender, RoutedEventArgs e)
@@ -488,12 +565,23 @@ namespace DSH_Launcher.Views
         private void OnPluginLogToggleClick(object? sender, RoutedEventArgs e)
             => this.SetPluginLogVisible(!this.PluginLogFlyout.IsVisible);
 
+        /// <summary>点了浮窗之外的空白处:关闭浮窗(点击不再往下传递,与 light dismiss 一致)。</summary>
+        private void OnPluginLogDismissPressed(object? sender, PointerPressedEventArgs e)
+        {
+            this.SetPluginLogVisible(false);
+            e.Handled = true;
+        }
+
         private void OnClosePluginLogClick(object? sender, RoutedEventArgs e) => this.SetPluginLogVisible(false);
 
         /// <summary>显示/隐藏输出浮窗。打开时清掉未读小圆点并把日志滚到末尾。</summary>
         private void SetPluginLogVisible(bool visible)
         {
             this.PluginLogFlyout.IsVisible = visible;
+
+            // 命中层与浮窗同进同出:只有浮窗开着时才拦截“点空白处”
+            this.PluginLogDismissLayer.IsVisible = visible;
+
             if (!visible)
             {
                 this.PluginLogUnreadDot.IsVisible = false;

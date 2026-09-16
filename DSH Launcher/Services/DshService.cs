@@ -352,23 +352,22 @@ namespace DSH_Launcher.Services
                 var psi = PlatformProcess.CreateShellStartInfo(
                     PlatformProcess.ShellCommandForExecutable(shimPath, this._lastRunArgs),
                     redirectOutput: true,
-                    redirectInput: true);
-                psi.StandardOutputEncoding = Encoding.UTF8;
-                psi.StandardErrorEncoding = Encoding.UTF8;
+                    redirectInput: true,
+                    rawByteOutput: true);
 
                 process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 process.OutputDataReceived += (_, e) =>
                 {
                     if (e.Data is not null)
                     {
-                        this.AppendLog(e.Data + "\r\n", detectWebUrl: true);
+                        this.AppendLog(PlatformProcess.DecodeChildOutputLine(e.Data) + "\r\n", detectWebUrl: true);
                     }
                 };
                 process.ErrorDataReceived += (_, e) =>
                 {
                     if (e.Data is not null)
                     {
-                        this.AppendLog(e.Data + "\r\n", detectWebUrl: true);
+                        this.AppendLog(PlatformProcess.DecodeChildOutputLine(e.Data) + "\r\n", detectWebUrl: true);
                     }
                 };
                 process.Exited += (_, _) => this.OnProcessExited(process);
@@ -626,11 +625,14 @@ namespace DSH_Launcher.Services
                 return (-1, string.Empty, locateError);
             }
 
-            using var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments));
+            // dsh(node)输出 UTF-8,但 cmd 自身的错误消息是 OEM 代码页 —— 按原样字节收下再逐行判定
+            using var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments), rawByteOutput: true);
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync();
-            return (process.ExitCode, await stdout, await stderr);
+            return (process.ExitCode,
+                PlatformProcess.DecodeChildOutputText(await stdout),
+                PlatformProcess.DecodeChildOutputText(await stderr));
         }
 
         /// <summary>
@@ -647,20 +649,21 @@ namespace DSH_Launcher.Services
             }
 
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments));
+            // dsh/pnpm(node)写 UTF-8,cmd 自身消息是 OEM 代码页 —— 原样收下再逐行判定
+            var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments), rawByteOutput: true);
             process.EnableRaisingEvents = true;
             process.OutputDataReceived += (_, e) =>
             {
                 if (e.Data is not null)
                 {
-                    onOutput(e.Data);
+                    onOutput(PlatformProcess.DecodeChildOutputLine(e.Data));
                 }
             };
             process.ErrorDataReceived += (_, e) =>
             {
                 if (e.Data is not null)
                 {
-                    onOutput(e.Data);
+                    onOutput(PlatformProcess.DecodeChildOutputLine(e.Data));
                 }
             };
             process.Exited += (_, _) => exited.TrySetResult();
@@ -762,22 +765,23 @@ namespace DSH_Launcher.Services
         /// <summary>运行命令并把 stdout/stderr 流式追加到日志,进程退出后返回。</summary>
         private async Task RunStreamingAsync(string command)
         {
-            // npm install 流程(npm 输出不含 Web 地址)与之前相同,无需代码变更
+            // npm install 流程(npm 输出不含 Web 地址);npm 是 Node 程序、写 UTF-8,
+            // 而 cmd 自身消息是 OEM 代码页 —— 原样收下再逐行判定
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var process = StartHidden(command);
+            var process = StartHidden(command, rawByteOutput: true);
             process.EnableRaisingEvents = true;
             process.OutputDataReceived += (_, e) =>
             {
                 if (e.Data is not null)
                 {
-                    this.AppendLog(e.Data + "\r\n");
+                    this.AppendLog(PlatformProcess.DecodeChildOutputLine(e.Data) + "\r\n");
                 }
             };
             process.ErrorDataReceived += (_, e) =>
             {
                 if (e.Data is not null)
                 {
-                    this.AppendLog(e.Data + "\r\n");
+                    this.AppendLog(PlatformProcess.DecodeChildOutputLine(e.Data) + "\r\n");
                 }
             };
             process.Exited += (_, _) =>
@@ -796,8 +800,13 @@ namespace DSH_Launcher.Services
         /// 静默执行一条命令行并捕获 stdout/stderr。
         /// Windows 走 cmd.exe /c,类 Unix 走登录 shell -lc(见 <see cref="PlatformProcess"/>)。
         /// </summary>
-        private static Process StartHidden(string command)
-            => Process.Start(PlatformProcess.CreateShellStartInfo(command, redirectOutput: true))!;
+        /// <param name="rawByteOutput">
+        /// 是否按“原样字节”收下输出,交给调用方用 <see cref="PlatformProcess.DecodeChildOutputLine"/> 判定编码。
+        /// 凡输出会被展示或解析的路径都要传 true(Node 写 UTF-8、cmd 自身消息是 OEM 代码页,两者会混在一起)。
+        /// </param>
+        private static Process StartHidden(string command, bool rawByteOutput = false)
+            => Process.Start(PlatformProcess.CreateShellStartInfo(
+                command, redirectOutput: true, rawByteOutput: rawByteOutput))!;
 
         [GeneratedRegex(@"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d+(?:/[^\s""'<>]*)?", RegexOptions.IgnoreCase | RegexOptions.Compiled, "zh-CN")]
         private static partial Regex GetWebUrlRegex();

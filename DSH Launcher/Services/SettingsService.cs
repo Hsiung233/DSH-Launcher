@@ -36,7 +36,11 @@ namespace DSH_Launcher.Services
     /// (https://api.dsh-plugin.org/plugins.zh.json,顶层是数组,字段是缩写)。
     /// 两份目录的插件集合与字段都不同,结构由启动器自动识别。</item>
     /// </list>
-    /// 枚举按**名字**解析(见 <see cref="LenientEnumConverter{T}"/>),所以调换数值不会读错已有设置。
+    /// 只列**已知结构**的目录:两份结构的字段完全不同(完整单词 vs 缩写),
+    /// 让用户随便填个地址很可能解析成空列表或错字段,所以不提供“自定义地址”。
+    /// 将来要接新市场时,在这里加一个成员 + <see cref="PluginService.ResolveCatalogUrl"/> 里加一条映射即可
+    /// (若新市场结构不同,还要给 <c>PluginService.ParseCatalog</c> 加一个解析分支)。
+    /// 枚举按**名字**解析(见 <see cref="LenientEnumConverter{T}"/>),所以增删成员不会读错已有设置。
     /// </summary>
     public enum PluginCatalogSource
     {
@@ -45,9 +49,6 @@ namespace DSH_Launcher.Services
 
         /// <summary>dsh-plugin.org(dsh-plugin-hub 的数据源)。</summary>
         DshPluginOrg = 1,
-
-        /// <summary>自建/第三方镜像,地址取 <see cref="AppSettings.PluginCatalogUrl"/>。</summary>
-        Custom = 2,
     }
 
     /// <summary>应用设置(持久化为 JSON)。</summary>
@@ -93,12 +94,9 @@ namespace DSH_Launcher.Services
         /// </summary>
         public int WebViewIdleTimeoutMinutes { get; set; }
 
-        /// <summary>插件目录来源,默认官方策展目录。</summary>
+        /// <summary>插件目录来源,默认 awesome-dsh-plugin。</summary>
         [JsonConverter(typeof(LenientEnumConverter<PluginCatalogSource>))]
         public PluginCatalogSource PluginCatalog { get; set; } = PluginCatalogSource.Official;
-
-        /// <summary>自定义插件目录地址(<see cref="PluginCatalogSource.Custom"/> 时使用)。</summary>
-        public string PluginCatalogUrl { get; set; } = string.Empty;
 
         /// <summary>“保留超时”的默认值(分钟)。</summary>
         public const int DefaultWebViewIdleTimeoutMinutes = 5;

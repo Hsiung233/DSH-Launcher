@@ -8,7 +8,7 @@
         x:Class="DSH_Launcher.Views.MainWindow"
         Title="DSH Launcher"
         Width="1280" Height="720"
-        MinWidth="1120" MinHeight="630">
+        MinWidth="1280" MinHeight="720">
 
     <!-- 对应 WinUI 版:NavigationView 顶部导航(首页/插件/设置),内容区切换 -->
     <ui:FANavigationView x:Name="NavView"

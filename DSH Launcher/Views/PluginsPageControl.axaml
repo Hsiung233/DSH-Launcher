@@ -26,11 +26,12 @@
                 <VirtualizingStackPanel/>
             </ItemsPanelTemplate>
 
-            <!-- 插件行:已安装列表与“全部组合条目”共用同一套模板 -->
+            <!-- 插件行:已安装列表与“全部组合条目”共用同一套模板。
+                 右边距 16:Fluent 的滚动条是 overlay(画在内容之上),只留 8 会压住行尾的按钮 -->
             <DataTemplate x:Key="PluginRowTemplate" x:DataType="svc:PluginEntry">
                 <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="0,0,0,1"
-                        Padding="0 8 8 8">
+                        Padding="0 8 16 8">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                         <StackPanel Grid.Column="0" Spacing="2">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -76,11 +77,12 @@
                 </Border>
             </DataTemplate>
 
-            <!-- 插件目录条目行(数据来自策展目录 awesome-dsh-plugin,不是 npm registry) -->
+            <!-- 插件目录条目行(数据来自策展目录,不是 npm registry)。
+                 右边距 16 同上:给 overlay 滚动条留出槽位 -->
             <DataTemplate x:Key="CatalogRowTemplate" x:DataType="svc:PluginCatalogEntry">
                 <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="0,0,0,1"
-                        Padding="0 10 8 10">
+                        Padding="0 10 16 10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                         <StackPanel Grid.Column="0" Spacing="2">
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -196,28 +198,157 @@
                         <TextBlock Text="刷新" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
+                <!-- 操作输出:开/关下方的日志浮窗。放页头而不是右下角浮动按钮,
+                     既不遮挡列表,也不用给内容留避让边距 -->
+                <Button x:Name="PluginLogToggleButton"
+                        Click="OnPluginLogToggleClick"
+                        ToolTip.Tip="操作输出(安装/卸载/启停的实时输出)">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" FontSize="14" VerticalAlignment="Center"/>
+                        <TextBlock Text="输出" VerticalAlignment="Center"/>
+                        <!-- 浮窗关着时,有新输出就亮一个小圆点 -->
+                        <Ellipse x:Name="PluginLogUnreadDot"
+                                 Width="8"
+                                 Height="8"
+                                 IsVisible="False"
+                                 VerticalAlignment="Center"
+                                 Fill="{DynamicResource SystemFillColorAttentionBrush}"/>
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </Grid>
 
-        <!-- ② 标签页:已安装(管理启停/卸载 + 全部组合条目)/ 安装新插件。
-             每个页签各自滚动/撑满;底部日志改成右下角浮动按钮 + 浮窗 -->
-        <ui:FATabView x:Name="PluginsTabs"
-                      Grid.Row="1"
-                      Margin="24 12 24 0"
-                      TabWidthMode="SizeToContent"
-                      IsAddTabButtonVisible="False"
-                      CanDragTabs="False"
-                      CanReorderTabs="False"
-                      SelectionChanged="OnPluginsTabChanged">
-            <ui:FATabViewItem Header="已安装" IsClosable="False">
-                <!-- 左右两列并排:左=已安装的插件(启停/卸载),右=全部组合条目(dsh 自带 + 已安装的组合结果)。
-                     两列各自撑满页签高度、列表在卡片内部滚动,所以这里**不放外层 ScrollViewer**
-                     —— 外层一旦滚动,列就被无限高度测量,退化成内容高度、撑不满。
-                     底部留 48:给右下角浮动的「输出」按钮让位 -->
-                <Grid x:Name="InstalledTabPanel"
+        <!-- ② 左右两栏:左=视图切换与选项(窄栏),右=列表。
+             列表是本页主体,所以把筛选/来源/手动安装都挪到左栏,把竖向空间全让给列表
+             (最小窗口 630 高时,原来那两行筛选要吃掉 ~110px,列表只剩两三行) -->
+        <Grid Grid.Row="1"
+              ColumnDefinitions="Auto,*"
+              ColumnSpacing="16"
+              Margin="24 16 24 24">
+
+            <!-- 左栏:视图 + 选项。上半部分可滚动(窗口矮时选项放不下),
+                 「手动安装」固定在栏底 —— 它是主要操作,不能被滚动挤到看不见。
+                 宽 254 = 12(内边距) + 214(控件净宽) + 14(滚动条槽位) + 12(内边距) + 2(边框):
+                 预留槽位是因为 Fluent 的滚动条是 **overlay**(画在内容之上),不预留就会遮住控件右边缘 -->
+            <Border Grid.Column="0"
+                    Width="254"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="12">
+                <Grid RowDefinitions="*,Auto" RowSpacing="10">
+                    <ScrollViewer Grid.Row="0"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="10" Margin="0 0 14 0">
+
+                            <TextBlock Text="视图"
+                                       FontSize="12"
+                                       Opacity="0.6"/>
+                            <ListBox x:Name="PluginsViewList"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Padding="0"
+                                     SelectionChanged="OnPluginsViewChanged">
+                                <ListBoxItem Content="已安装" Tag="installed"/>
+                                <ListBoxItem Content="安装新插件" Tag="install"/>
+                            </ListBox>
+
+                            <!-- 组合条目筛选(只在「已安装」视图用得上) -->
+                            <StackPanel x:Name="EntriesFilterPanel" Spacing="4">
+                                <TextBlock Text="筛选组合条目"
+                                           FontSize="12"
+                                           Opacity="0.6"/>
+                                <TextBox x:Name="EntryFilterBox"
+                                         PlaceholderText="包名或条目 id"
+                                         TextChanged="OnEntryFilterChanged"/>
+                            </StackPanel>
+
+                            <!-- 目录选项(只在「安装新插件」视图用得上) -->
+                            <StackPanel x:Name="CatalogOptionsPanel"
+                                        IsVisible="False"
+                                        Spacing="4">
+                                <TextBlock Text="目录来源"
+                                           FontSize="12"
+                                           Opacity="0.6"/>
+                                <ComboBox x:Name="CatalogSourceCombo"
+                                          HorizontalAlignment="Stretch"
+                                          ToolTip.Tip="两份社区目录互为独立:awesome-dsh-plugin 是市场 dsh-market 的数据源;dsh-plugin.org 是插件中心 dsh-plugin-hub 的数据源。"
+                                          SelectionChanged="OnCatalogSourceChanged">
+                                    <ComboBoxItem Content="awesome-dsh-plugin"/>
+                                    <ComboBoxItem Content="dsh-plugin.org"/>
+                                </ComboBox>
+                                <Button x:Name="RefreshCatalogButton"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Center"
+                                        Click="OnRefreshCatalogClick"
+                                        ToolTip.Tip="重新拉取目录(3-7MB)">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" FontSize="14" VerticalAlignment="Center"/>
+                                        <TextBlock Text="刷新目录" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+
+                                <TextBlock Text="分类"
+                                           FontSize="12"
+                                           Opacity="0.6"
+                                           Margin="0 6 0 0"/>
+                                <ComboBox x:Name="CatalogCategoryCombo"
+                                          HorizontalAlignment="Stretch"
+                                          SelectionChanged="OnCatalogFilterChanged"/>
+
+                                <TextBlock Text="排序"
+                                           FontSize="12"
+                                           Opacity="0.6"
+                                           Margin="0 6 0 0"/>
+                                <ComboBox x:Name="CatalogSortCombo"
+                                          HorizontalAlignment="Stretch"
+                                          SelectionChanged="OnCatalogFilterChanged">
+                                    <ComboBoxItem Content="按星标"/>
+                                    <ComboBoxItem Content="按下载量"/>
+                                    <ComboBoxItem Content="按收录时间"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- 手动安装:目录里没有的包(本地路径 / 私有仓库)。
+                         右边距与上面滚动内容一致,两者右边缘才对齐 -->
+                    <StackPanel Grid.Row="1"
+                                x:Name="ManualInstallPanel"
+                                IsVisible="False"
+                                Margin="0 0 14 0"
+                                Spacing="4">
+                        <TextBlock Text="手动安装"
+                                   FontSize="12"
+                                   Opacity="0.6"
+                                   ToolTip.Tip="用于目录里没有的包(本地路径 / 私有仓库)。目录外的插件没有经过策展校验,只安装你信任的来源。"/>
+                        <TextBox x:Name="InstallSpecBox"
+                                 PlaceholderText="包名 / tarball / 路径 / git"
+                                 KeyDown="OnInstallSpecKeyDown"/>
+                        <Button x:Name="InstallPluginButton"
+                                Classes="accent"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center"
+                                Click="OnInstallPluginClick">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="14" VerticalAlignment="Center"/>
+                                <TextBlock Text="安装" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- 右栏:列表(两个视图共用一个位置,靠 IsVisible 切换;
+                 隐藏的那一半 IsVisible=false,其控件不在 UIA 树里) -->
+            <Grid Grid.Column="1">
+
+                <!-- 已安装视图:两列(已安装 | 全部组合条目) -->
+                <Grid x:Name="InstalledView"
                       ColumnDefinitions="*,*"
-                      ColumnSpacing="12"
-                      Margin="0 12 0 48">
+                      ColumnSpacing="12">
 
                     <!-- 左列:已安装的插件(dsh.profile 的 dependencies) -->
                     <Border Grid.Column="0"
@@ -280,7 +411,7 @@
                             CornerRadius="8"
                             Padding="16">
                         <Grid RowDefinitions="Auto,Auto,*" RowSpacing="4">
-                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="8">
                                 <TextBlock Text="全部组合条目"
                                            FontSize="14"
                                            FontWeight="SemiBold"
@@ -290,12 +421,6 @@
                                            FontSize="12"
                                            Opacity="0.7"
                                            VerticalAlignment="Center"/>
-                                <TextBox x:Name="EntryFilterBox"
-                                         Grid.Column="2"
-                                         Width="170"
-                                         VerticalAlignment="Center"
-                                         PlaceholderText="筛选包名或条目 id"
-                                         TextChanged="OnEntryFilterChanged"/>
                             </Grid>
                             <TextBlock Grid.Row="1"
                                        FontSize="12"
@@ -313,86 +438,34 @@
                         </Grid>
                     </Border>
                 </Grid>
-            </ui:FATabViewItem>
 
-            <ui:FATabViewItem Header="安装新插件" IsClosable="False">
-                <!-- 插件来源是**策展目录**(awesome-dsh-plugin 的 plugins.json),不是 npm registry:
-                     社区插件市场 dsh-market 用的就是这份数据。目录每条都带现成的安装规格
-                     (npm 包优先,GitHub-only 的走 github:owner/repo),启动器直接照用。
-                     目录约 3MB,所以等切到本页签时才拉,且只在内存里留一份(上游刻意不做陈旧缓存);
-                     点「刷新目录」重新拉。
-                     布局:浏览卡(*)撑满 / 手动安装卡(Auto)。来源选择并进浏览卡,省一行高度 -->
-                <Grid x:Name="InstallTabPanel"
-                      RowDefinitions="*,Auto"
-                      RowSpacing="12"
-                      Margin="0 12 0 48">
+                <!-- 安装新插件视图:搜索行 + 目录列表(来源/分类/排序/手动安装都在左栏)。
+                     来源是策展目录(awesome-dsh-plugin 或 dsh-plugin.org,结构自动识别),
+                     不是 npm registry;切到本视图时才拉目录,只在内存里留一份,点「刷新目录」重拉 -->
+                <Grid x:Name="InstallView"
+                      IsVisible="False"
+                      RowDefinitions="Auto,*"
+                      RowSpacing="8">
 
-                    <!-- ① 浏览 / 搜索目录 -->
-                    <Border Grid.Row="0"
+                    <TextBox x:Name="CatalogSearchBox"
+                             PlaceholderText="搜索插件名 / 作者 / 描述"
+                             TextChanged="OnCatalogSearchTextChanged"/>
+
+                    <Border Grid.Row="1"
                             Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1"
                             CornerRadius="8"
                             Padding="16">
-                        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
-                            <!-- 搜索 / 分类 / 排序 -->
-                            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                                <TextBox x:Name="CatalogSearchBox"
-                                         PlaceholderText="搜索插件名 / 作者 / 描述"
-                                         TextChanged="OnCatalogSearchTextChanged"/>
-                                <ComboBox x:Name="CatalogCategoryCombo"
-                                          Grid.Column="1"
-                                          Width="150"
-                                          VerticalAlignment="Center"
-                                          SelectionChanged="OnCatalogFilterChanged"/>
-                                <ComboBox x:Name="CatalogSortCombo"
-                                          Grid.Column="2"
-                                          Width="130"
-                                          VerticalAlignment="Center"
-                                          SelectionChanged="OnCatalogFilterChanged">
-                                    <ComboBoxItem Content="按星标"/>
-                                    <ComboBoxItem Content="按下载量"/>
-                                    <ComboBoxItem Content="按收录时间"/>
-                                </ComboBox>
-                            </Grid>
+                        <Grid RowDefinitions="Auto,*" RowSpacing="8">
+                            <TextBlock x:Name="CatalogStatusText"
+                                       FontSize="12"
+                                       Opacity="0.7"
+                                       TextWrapping="Wrap"
+                                       VerticalAlignment="Center"
+                                       Text="正在读取插件目录…"/>
 
-                            <!-- 计数/状态(左) + 目录来源与刷新(右) -->
-                            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                                <TextBlock x:Name="CatalogStatusText"
-                                           FontSize="12"
-                                           Opacity="0.7"
-                                           TextWrapping="Wrap"
-                                           VerticalAlignment="Center"
-                                           Text="正在读取插件目录…"/>
-                                <ComboBox x:Name="CatalogSourceCombo"
-                                          Grid.Column="1"
-                                          Width="190"
-                                          VerticalAlignment="Center"
-                                          ToolTip.Tip="两份社区目录互为独立:awesome-dsh-plugin 是市场 dsh-market 的数据源;dsh-plugin.org 是插件中心 dsh-plugin-hub 的数据源。也可指定自建镜像。"
-                                          SelectionChanged="OnCatalogSourceChanged">
-                                    <ComboBoxItem Content="awesome-dsh-plugin"/>
-                                    <ComboBoxItem Content="dsh-plugin.org"/>
-                                    <ComboBoxItem Content="自定义镜像"/>
-                                </ComboBox>
-                                <Button x:Name="RefreshCatalogButton"
-                                        Grid.Column="2"
-                                        Click="OnRefreshCatalogClick"
-                                        ToolTip.Tip="重新拉取目录(约 3MB)">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;" FontSize="14" VerticalAlignment="Center"/>
-                                        <TextBlock Text="刷新目录" VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </Button>
-                            </Grid>
-
-                            <!-- 自定义镜像地址(平时不显示,行高为 0) -->
-                            <TextBox Grid.Row="2"
-                                     x:Name="CatalogUrlBox"
-                                     IsVisible="False"
-                                     PlaceholderText="镜像地址:需返回同结构的 plugins.json"
-                                     LostFocus="OnCatalogUrlLostFocus"/>
-
-                            <ScrollViewer Grid.Row="3"
+                            <ScrollViewer Grid.Row="1"
                                           x:Name="CatalogListScroll"
                                           HorizontalScrollBarVisibility="Disabled"
                                           VerticalScrollBarVisibility="Auto">
@@ -402,122 +475,83 @@
                             </ScrollViewer>
                         </Grid>
                     </Border>
-
-                    <!-- ② 手动安装:目录里没有的包(本地路径 / 私有仓库) -->
-                    <Border Grid.Row="1"
-                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="16">
-                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                            <TextBlock Text="手动安装"
-                                       VerticalAlignment="Center"
-                                       ToolTip.Tip="用于目录里没有的包(本地路径 / 私有仓库)。目录外的插件没有经过策展校验,只安装你信任的来源。"/>
-                            <TextBox x:Name="InstallSpecBox"
-                                     Grid.Column="1"
-                                     PlaceholderText="包名 / @scope/name / 版本 / tarball / 本地绝对路径 / git 地址"
-                                     KeyDown="OnInstallSpecKeyDown"/>
-                            <Button x:Name="InstallPluginButton"
-                                    Grid.Column="2"
-                                    Classes="accent"
-                                    Click="OnInstallPluginClick">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="14" VerticalAlignment="Center"/>
-                                    <TextBlock Text="安装" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                        </Grid>
-                    </Border>
                 </Grid>
-            </ui:FATabViewItem>
-        </ui:FATabView>
+            </Grid>
+        </Grid>
 
-        <!-- ③ 浮动日志:右下角浮动按钮，点开后在它上方弹出日志浮窗(点击开/关)。
-             浮窗不占页面布局空间(跨两行堆叠在右下角)，所以两个页签能拿到全部竖向空间；
-             页签内容各自带 48 的底部内边距，免得最后一行被浮动按钮压住 -->
-        <StackPanel Grid.Row="0"
-                    Grid.RowSpan="2"
-                    Orientation="Vertical"
-                    Spacing="12"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Bottom"
-                    Margin="0 0 20 18">
+        <!-- ③ 点空白处关闭输出浮窗:一层透明的命中层,盖住**内容区**(第 1 行)。
+             - 放在浮窗**之前**声明 ⇒ z 序在浮窗之下,浮窗里的复制/清空/关闭按钮不受影响。
+             - 只盖内容区、不盖页头 ⇒ 页头的「输出」按钮仍能当开关用(点它关、再点开)。
+             - Background 必须给透明画刷:Avalonia 里 null 不参与命中测试,必须 Transparent 才收得到点击 -->
+        <Border x:Name="PluginLogDismissLayer"
+                Grid.Row="1"
+                IsVisible="False"
+                Background="Transparent"
+                PointerPressed="OnPluginLogDismissPressed"/>
 
-            <Border x:Name="PluginLogFlyout"
-                    IsVisible="False"
-                    Width="580"
-                    Height="340"
-                    Padding="16"
-                    CornerRadius="8"
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    BoxShadow="0 8 24 4 #40000000">
-                <Grid RowDefinitions="Auto,*">
-                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 0 0 10">
-                        <TextBlock Text="操作输出"
-                                   FontSize="14"
-                                   FontWeight="SemiBold"
-                                   VerticalAlignment="Center"/>
-                        <StackPanel Grid.Column="1"
-                                    Orientation="Horizontal"
-                                    Spacing="8"
-                                    VerticalAlignment="Center">
-                            <Button x:Name="CopyPluginLogButton" Click="OnCopyPluginLogClick">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C8;" FontSize="14" VerticalAlignment="Center"/>
-                                    <TextBlock x:Name="CopyPluginLogButtonText" Text="复制" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="ClearPluginLogButton" Click="OnClearPluginLogClick">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74D;" FontSize="14" VerticalAlignment="Center"/>
-                                    <TextBlock Text="清空" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="ClosePluginLogButton"
-                                    Click="OnClosePluginLogClick"
-                                    ToolTip.Tip="关闭输出浮窗">
-                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="14" VerticalAlignment="Center"/>
-                            </Button>
-                        </StackPanel>
-                    </Grid>
-
-                    <Border Grid.Row="1"
-                            Background="{DynamicResource CodeAreaFillBrush}"
-                            CornerRadius="4"
-                            Padding="10">
-                        <ScrollViewer x:Name="PluginLogScroll"
-                                      HorizontalScrollBarVisibility="Disabled"
-                                      VerticalScrollBarVisibility="Auto">
-                            <SelectableTextBlock x:Name="PluginLogTextBlock"
-                                                 TextWrapping="Wrap"
-                                                 FontFamily="Consolas"
-                                                 FontSize="12"
-                                                 LineHeight="18"
-                                                 Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        </ScrollViewer>
-                    </Border>
+        <!-- 日志浮窗:由页头的「输出」按钮开关。从页头下方垂下来(内容区顶部右对齐),
+             不占布局空间;声明在内容与命中层之后,所以盖在它们之上 -->
+        <Border x:Name="PluginLogFlyout"
+                Grid.Row="1"
+                IsVisible="False"
+                Width="580"
+                Height="340"
+                Margin="0 4 20 0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Padding="16"
+                CornerRadius="8"
+                Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                BoxShadow="0 8 24 4 #40000000">
+            <Grid RowDefinitions="Auto,*">
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0 0 0 10">
+                    <TextBlock Text="操作输出"
+                               FontSize="14"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                VerticalAlignment="Center">
+                        <Button x:Name="CopyPluginLogButton" Click="OnCopyPluginLogClick">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C8;" FontSize="14" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="CopyPluginLogButtonText" Text="复制" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="ClearPluginLogButton" Click="OnClearPluginLogClick">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74D;" FontSize="14" VerticalAlignment="Center"/>
+                                <TextBlock Text="清空" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="ClosePluginLogButton"
+                                Click="OnClosePluginLogClick"
+                                ToolTip.Tip="关闭输出浮窗">
+                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE711;" FontSize="14" VerticalAlignment="Center"/>
+                        </Button>
+                    </StackPanel>
                 </Grid>
-            </Border>
 
-            <Button x:Name="PluginLogToggleButton"
-                    HorizontalAlignment="Right"
-                    Click="OnPluginLogToggleClick"
-                    ToolTip.Tip="操作输出(安装/卸载/启停的实时输出)">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" FontSize="14" VerticalAlignment="Center"/>
-                    <TextBlock Text="输出" VerticalAlignment="Center"/>
-                    <!-- 浮窗关着时,有新输出就亮一个小圆点 -->
-                    <Ellipse x:Name="PluginLogUnreadDot"
-                             Width="8"
-                             Height="8"
-                             IsVisible="False"
-                             VerticalAlignment="Center"
-                             Fill="{DynamicResource SystemFillColorAttentionBrush}"/>
-                </StackPanel>
-            </Button>
-        </StackPanel>
+                <Border Grid.Row="1"
+                        Background="{DynamicResource CodeAreaFillBrush}"
+                        CornerRadius="4"
+                        Padding="10">
+                    <ScrollViewer x:Name="PluginLogScroll"
+                                  Padding="0 0 12 0"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <SelectableTextBlock x:Name="PluginLogTextBlock"
+                                             TextWrapping="Wrap"
+                                             FontFamily="Consolas"
+                                             FontSize="12"
+                                             LineHeight="18"
+                                             Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+        </Border>
     </Grid>
 </UserControl>

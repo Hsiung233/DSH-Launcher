@@ -1,6 +1,9 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Linq;
+using System.Text;
 
 namespace DSH_Launcher.Services
 {
@@ -80,15 +83,89 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
+        /// “原样字节”编码:每个字节映射成一个字符,字节 ↔ 字符可无损往返。
+        /// 用它当下层解码,就能在收到字符串之后再把原始字节还原出来,从而逐行判定真正的编码。
+        /// </summary>
+        private static readonly Encoding RawByteEncoding = Encoding.Latin1;
+
+        /// <summary>严格 UTF-8:遇到非法字节会抛 <see cref="DecoderFallbackException"/>(判定靠这个)。</summary>
+        private static readonly Encoding StrictUtf8 =
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+        /// <summary>
+        /// 系统 OEM 代码页 —— cmd.exe 等原生工具在**重定向**时使用的编码(中文 Windows = GBK/936)。
+        /// 取不到时退回 UTF-8(总比把字符变成替字符好)。
+        /// </summary>
+        private static readonly Encoding OemEncoding = CreateOemEncoding();
+
+        private static Encoding CreateOemEncoding()
+        {
+            try
+            {
+                return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
+            }
+            catch (Exception)
+            {
+                return Encoding.UTF8;
+            }
+        }
+
+        /// <summary>
+        /// 解码子进程输出的一行。
+        /// <para>
+        /// ⚠ 不能“一刀切”用某个编码:一次 <c>cmd.exe /c</c> 的输出里可能**混着两种** ——
+        /// Node 系工具(dsh / npm / pnpm)写 UTF-8,而 cmd.exe 自己的消息
+        /// (如「'xxx' 不是内部或外部命令」)是系统 OEM 代码页;实测 <c>chcp 65001</c>
+        /// 对重定向的 cmd 输出**无效**,而且两者还会落在同一管道(甚至同一 stderr)上,无法按流分开。
+        /// </para>
+        /// <para>
+        /// 判据:先按严格 UTF-8 试解。UTF-8 自带合法性校验,而 GBK 的第二字节常落在 0x40-0x7F,
+        /// 不是合法的 UTF-8 续字节,所以 GBK 文本几乎必然解失败 → 回退 OEM 代码页。
+        /// 纯 ASCII 行两种解一致,不受影响。
+        /// </para>
+        /// </summary>
+        public static string DecodeChildOutputLine(string rawByteChars)
+        {
+            if (rawByteChars.Length == 0)
+            {
+                return rawByteChars;
+            }
+
+            var bytes = RawByteEncoding.GetBytes(rawByteChars);
+            try
+            {
+                return StrictUtf8.GetString(bytes);
+            }
+            catch (DecoderFallbackException)
+            {
+                return OemEncoding.GetString(bytes);
+            }
+        }
+
+        /// <summary>
+        /// 多行文本的智能解码。**逐行判定** —— 同一份捕获里可能同时含 cmd 消息与 Node 输出。
+        /// </summary>
+        public static string DecodeChildOutputText(string rawByteChars)
+            => string.Join("\n", rawByteChars.Split('\n').Select(DecodeChildOutputLine));
+
+        /// <summary>
         /// 把一条完整命令行包装成 shell 调用,并按要求设置重定向。
         /// Windows:<c>cmd.exe /c &lt;command&gt;</c>(与改造前完全一致)。
         /// 类 Unix:<c>/bin/zsh -lc &lt;command&gt;</c>;命令行通过 ArgumentList 逐个传给子进程,
         /// 不让 .NET 对字符串做二次解析(引号、反斜杠都不会被吃掉)。
         /// </summary>
+        /// <param name="rawByteOutput">
+        /// 是否把输出按“原样字节”保留,交给调用方用 <see cref="DecodeChildOutputLine"/> 判定编码。
+        /// **输出会被展示或解析的调用都要传 true** —— 否则 .NET 会用系统代码页一刀切,
+        /// 把 Node 系的 UTF-8 输出解成乱码(实测 <c>…WARN…</c> → <c>鈥塛ARN鈥?</c>、
+        /// <c>—</c> → <c>鈥?</c>、盒线字符 → <c>鈹?/c>)。
+        /// <para>只有纯 ASCII 用途(如 <c>pnpm --version</c>)可以不传。</para>
+        /// </param>
         public static ProcessStartInfo CreateShellStartInfo(
             string command,
             bool redirectOutput = false,
-            bool redirectInput = false)
+            bool redirectInput = false,
+            bool rawByteOutput = false)
         {
             var psi = new ProcessStartInfo
             {
@@ -111,6 +188,12 @@ namespace DSH_Launcher.Services
             {
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
+
+                if (rawByteOutput)
+                {
+                    psi.StandardOutputEncoding = RawByteEncoding;
+                    psi.StandardErrorEncoding = RawByteEncoding;
+                }
             }
 
             if (redirectInput)

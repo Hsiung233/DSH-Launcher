@@ -280,12 +280,9 @@ namespace DSH_Launcher.Services
         private readonly StringBuilder _log = new();
         private volatile bool _busy;
 
-        /// <summary>本次会话拉取到的插件目录(上游刻意不做陈旧缓存,所以不落盘,只在内存里留着)。</summary>
-        private PluginCatalog? _catalog;
-
         /// <summary>
         /// 拉取插件目录用的 HTTP 客户端。设置 User-Agent:部分 CDN/镜像会拒绝没有 UA 的请求。
-        /// 目录约 3MB,给 60 秒超时。
+        /// 目录 3-7MB,给 60 秒超时。
         /// </summary>
         private static readonly HttpClient Http = CreateHttpClient();
 
@@ -375,34 +372,48 @@ namespace DSH_Launcher.Services
         public const string DshPluginOrgCatalogUrl = "https://api.dsh-plugin.org/plugins.zh.json";
 
         /// <summary>当前设置对应的目录地址。</summary>
-        public static string ResolveCatalogUrl()
+        public static string ResolveCatalogUrl() => SettingsService.Instance.Settings.PluginCatalog switch
         {
-            var settings = SettingsService.Instance.Settings;
-            return settings.PluginCatalog switch
-            {
-                PluginCatalogSource.DshPluginOrg => DshPluginOrgCatalogUrl,
-                PluginCatalogSource.Custom when !string.IsNullOrWhiteSpace(settings.PluginCatalogUrl) =>
-                    settings.PluginCatalogUrl.Trim(),
-                _ => AwesomeDshPluginCatalogUrl,
-            };
-        }
-
-        /// <summary>本次会话已拉取的目录(上游刻意不做陈旧缓存,所以只缓存在内存里)。</summary>
-        public PluginCatalog? CachedCatalog => this._catalog;
+            PluginCatalogSource.DshPluginOrg => DshPluginOrgCatalogUrl,
+            _ => AwesomeDshPluginCatalogUrl,
+        };
 
         /// <summary>
-        /// 拉取策展目录并解析。forceReload=false 且已有本次会话的缓存时直接复用
-        /// (切页签不重复下载 3MB;点「刷新目录」时才重新拉)。
+        /// 按目录地址缓存已解析的目录,键就是地址。
+        /// <para>
+        /// 为什么需要它:两个目录各要 0.1-8 秒才能拉完(3.4MB / 6.6MB),
+        /// 用户来回切来源时每次重下既慢又容易看到错的中转状态;切回已拉过的来源应当是瞬时的。
+        /// </para>
+        /// <para>
+        /// 缓存**天然有界**:地址只可能来自 <see cref="PluginCatalogSource"/> 的枚举(目前 2 个),
+        /// 所以最多 2 条,不需要淘汰策略。条目总数 ~1.3 万,内存占用可接受。
+        /// </para>
+        /// <para>
+        /// 与上游的区别:上游刻意不做**陈旧副本**(“a stale answer is not a degraded one but a wrong one”),
+        /// 所以这里也只在本次运行的内存里留,不落盘、不跨进程,
+        /// 并且始终可以用「刷新目录」强制重拉。
+        /// </para>
+        /// </summary>
+        private readonly Dictionary<string, PluginCatalog> _catalogCache = new(StringComparer.Ordinal);
+
+        /// <summary>取某个地址已缓存的目录;url 为空表示当前设置对应的地址。没有则返回 null。</summary>
+        public PluginCatalog? GetCachedCatalog(string? url = null)
+            => this._catalogCache.TryGetValue(url ?? ResolveCatalogUrl(), out var cached) ? cached : null;
+
+        /// <summary>
+        /// 拉取策展目录并解析。命中缓存时直接返回(切换来源、切回页签都不重复下载);
+        /// forceReload=true(点「刷新目录」)时绕过缓存重新拉,并覆盖缓存。
         /// 失败时抛异常,由调用方展示原因 —— 上游也是这个态度:不拿旧数据冒充答案。
         /// </summary>
         public async Task<PluginCatalog> LoadCatalogAsync(bool forceReload = false)
         {
-            if (!forceReload && this._catalog is not null && this._catalog.SourceUrl == ResolveCatalogUrl())
+            var url = ResolveCatalogUrl();
+
+            if (!forceReload && this._catalogCache.TryGetValue(url, out var cached))
             {
-                return this._catalog;
+                return cached;
             }
 
-            var url = ResolveCatalogUrl();
             var started = DateTime.Now;
             try
             {
@@ -416,7 +427,7 @@ namespace DSH_Launcher.Services
 
                 var catalog = ParseCatalog(document.RootElement, url);
 
-                this._catalog = catalog;
+                this._catalogCache[url] = catalog;
                 var updated = catalog.Updated.Length > 0 ? $",目录更新于 {catalog.Updated}" : string.Empty;
                 this.AppendSystemLog($"已读取插件目录 {url}:{catalog.Entries.Count} 个插件"
                     + $"(下载 {(downloadedAt - started).TotalMilliseconds:0}ms"
@@ -1267,14 +1278,14 @@ namespace DSH_Launcher.Services
         private static string Truncate(string value, int maxLength)
             => value.Length <= maxLength ? value : value[..maxLength] + "…";
 
-        /// <summary>执行一条命令并捕获 stdout/stderr(用于 pnpm 探测与市场搜索)。</summary>
+        /// <summary>执行一条命令并捕获 stdout/stderr(用于 pnpm 探测)。</summary>
         private static async Task<(string Stdout, string Stderr)> RunCaptureAsync(string command)
         {
             try
             {
-                var startInfo = PlatformProcess.CreateShellStartInfo(command, redirectOutput: true);
-                startInfo.StandardOutputEncoding = Encoding.UTF8;
-                startInfo.StandardErrorEncoding = Encoding.UTF8;
+                // pnpm 是 Node 程序、写 UTF-8;cmd 自身消息是 OEM 代码页 —— 原样收下再逐行判定
+                var startInfo = PlatformProcess.CreateShellStartInfo(
+                    command, redirectOutput: true, rawByteOutput: true);
 
                 using var process = new Process { StartInfo = startInfo };
                 process.Start();
@@ -1284,7 +1295,8 @@ namespace DSH_Launcher.Services
                 var stdout = process.StandardOutput.ReadToEndAsync();
                 var stderr = process.StandardError.ReadToEndAsync();
                 await process.WaitForExitAsync();
-                return (await stdout, await stderr);
+                return (PlatformProcess.DecodeChildOutputText(await stdout),
+                    PlatformProcess.DecodeChildOutputText(await stderr));
             }
             catch (Exception ex)
             {
