@@ -98,19 +98,34 @@ dotnet run --project "DSH Launcher/DSH Launcher.csproj"
 
 发行版另附 `Properties/PublishProfiles/DSH Launcher_Windows_x64.pubxml` 发布配置。
 
-### 打包安装程序（Inno Setup）
+### 打包安装包（Inno Setup）
 
-1. 发布应用（框架依赖版，要求用户机器已装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)）：
+需要 PowerShell 7+，以及 [Inno Setup 6](https://jrsoftware.org/isdl.php) 或更高版本。
 
-   ```powershell
-   dotnet publish "DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
-   ```
+```powershell
+# 发布 + 编译安装包，一步到位
+.\Build-Installer.ps1
 
-   输出目录为 `DSH Launcher/bin/Publish/DSH Launcher_Windows_x64`（与 `installer.iss` 里的
-   `MyPublishDir` 对应）。
+# 只发布（输出到 DSH Launcher\bin\Publish\DSH Launcher_Windows_x64）
+.\Publish-App.ps1
+```
 
-2. 用 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 打开 `Setup/installer.iss` 编译，
-   输出 `Setup/DSHLauncher-Setup-x64.exe`。
+`Publish-App.ps1` 默认会**结束正在运行的 DSH Launcher**（常驻托盘的单实例程序，占用文件会让发布失败）
+并**清空发布目录**（`dotnet publish` 不会删除旧产物，残留的 `.pdb`、`Assets\logo.ico` 会被打进安装包），
+分别用 `-KeepRunning`、`-NoClean` 关掉。
+
+`Build-Installer.ps1` 默认先调用 `Publish-App.ps1`（`-NoPublish` 可跳过），自动查找 `ISCC.exe`
+（`-ISCC` → PATH → 注册表 → 常见安装位置），并在编译前校验 `installer.iss` 的 `MyPublishDir` 里
+确实有程序文件，最后产出 `Setup\DSHLauncher-Setup-x64.exe`（同时打印文件大小与 SHA256）。
+
+不用脚本的等价手工步骤：
+
+```powershell
+dotnet publish "DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
+```
+
+再用 Inno Setup 的 IDE 打开 `Setup/installer.iss` 编译（或 `ISCC.exe Setup\installer.iss`）。
+发布为框架依赖版，要求用户机器已装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
 
 安装程序内置 .NET 10 Desktop Runtime 检测：缺失时引导用户到官网下载后再装；支持中文向导、
 开始菜单/桌面快捷方式与卸载。
@@ -148,7 +163,10 @@ DSH Launcher/
     AppLogService.cs              应用日志文件
   Properties/PublishProfiles/     dotnet publish 发布配置（DSH Launcher_Windows_x64）
 
-Setup/                            Inno Setup 安装包脚本（installer.iss）与产物输出
+Publish-App.ps1                   发布到 bin/Publish 的脚本（清空旧产物、结束运行中的实例）
+Build-Installer.ps1               先调 Publish-App.ps1 发布，再用 Inno Setup 编译安装包
+Setup/
+  installer.iss                   Inno Setup 安装包脚本
 docs/screenshots/                 README 中使用的界面截图
 ```
 
