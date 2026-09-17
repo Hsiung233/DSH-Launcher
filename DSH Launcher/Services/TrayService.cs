@@ -150,20 +150,8 @@ namespace DSH_Launcher.Services
 
         private static WindowIcon? LoadIcon()
         {
-            try
-            {
-                var pngPath = Path.Combine(AppContext.BaseDirectory, "Assets", "logo-512.png");
-                if (File.Exists(pngPath))
-                {
-                    return new WindowIcon(new Bitmap(pngPath));
-                }
-            }
-            catch (Exception)
-            {
-                // 图标加载失败不影响功能
-            }
-
-            return null;
+            // logo-512.png 已嵌入程序集资源(avares://),见 AppIcon.LoadLogo512;失败时返回 null
+            return AppIcon.LoadLogo512();
         }
 
         public void Dispose()

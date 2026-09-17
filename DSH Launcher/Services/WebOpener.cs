@@ -317,6 +317,34 @@ namespace DSH_Launcher.Services
             CreateAndShow(url);
         }
 
+        /// <summary>
+        /// 指定 WebView2 的用户数据目录(Cookie/缓存/LocalStorage 等)到 %LOCALAPPDATA%。
+        /// 事件在适配器创建 WebView2 环境时触发一次(每个 NativeWebView 实例一次),
+        /// 同步赋值即可,无需 <c>GetDeferral()</c>。仅 Windows 生效;macOS 的 WKWebView
+        /// 数据由系统管理,没有对应参数。
+        /// </summary>
+        private static void OnWebViewEnvironmentRequested(object? sender, WebViewEnvironmentRequestedEventArgs e)
+        {
+            if (e is not WindowsWebView2EnvironmentRequestedEventArgs webView2Args)
+            {
+                return;
+            }
+
+            try
+            {
+                var userDataFolder = Path.Combine(
+                    PlatformProcess.LocalAppDataDirectory, "DSH Launcher", "WebView2");
+                Directory.CreateDirectory(userDataFolder);
+                webView2Args.UserDataFolder = userDataFolder;
+                AppLogService.Write($"[WebView] WebView2 数据目录: {userDataFolder}");
+            }
+            catch (Exception ex)
+            {
+                // 建目录失败就不指定,让 WebView2 走默认位置(exe 同级),仅记录原因
+                AppLogService.Write($"[WebView] 无法创建 WebView2 数据目录({ex.Message}),使用默认位置");
+            }
+        }
+
         /// <summary>首次打开:创建窗口与 WebView2 适配器(冷启动,较慢),之后由 <see cref="OpenInWebView"/> 复用。</summary>
         private static void CreateAndShow(string url)
         {
@@ -325,6 +353,12 @@ namespace DSH_Launcher.Services
             try
             {
                 webView = new NativeWebView();
+
+                // 指定 WebView2 用户数据目录到 %LOCALAPPDATA%:WebView2 的默认位置是
+                // "<exe 所在目录>\<exe名>.WebView2",装进 Program Files 后会因无写权限而创建失败,
+                // 且 Debug/publish/正式安装各一份导致登录态割裂。必须在适配器创建 WebView2 环境
+                // (首次导航)之前挂上,EnvironmentRequested 在该时机被触发一次。
+                webView.EnvironmentRequested += OnWebViewEnvironmentRequested;
 
                 webView.NavigationStarted += (_, _) =>
                 {
@@ -454,20 +488,8 @@ namespace DSH_Launcher.Services
 
         private static WindowIcon? LoadAppIcon()
         {
-            try
-            {
-                var pngPath = Path.Combine(AppContext.BaseDirectory, "Assets", "logo-512.png");
-                if (File.Exists(pngPath))
-                {
-                    return new WindowIcon(new Bitmap(pngPath));
-                }
-            }
-            catch (Exception)
-            {
-                // 图标加载失败不影响功能
-            }
-
-            return null;
+            // logo-512.png 已嵌入程序集资源(avares://),见 AppIcon.LoadLogo512
+            return AppIcon.LoadLogo512();
         }
     }
 }

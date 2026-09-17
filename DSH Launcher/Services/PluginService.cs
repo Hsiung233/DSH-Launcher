@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace DSH_Launcher.Services
@@ -308,7 +309,25 @@ namespace DSH_Launcher.Services
         };
 
         private readonly StringBuilder _log = new();
+
+        /// <summary>
+        /// 日志缓冲区的锁。日志会被多个线程写:RunDshStreamingAsync 的 stdout/stderr 回调(线程池)
+        /// 与 UI 线程的操作日志;读侧还有 LogText 与 ClearLog。StringBuilder 不是线程安全的。
+        /// </summary>
+        private readonly Lock _logLock = new();
+
         private volatile bool _busy;
+
+        /// <summary>
+        /// 插件变更操作的互斥量。安装/卸载都由 <c>dsh plugin</c> 转发给 profile 目录里的 pnpm,
+        /// 改的是同一份 package.json / pnpm-lock.yaml —— 两个操作并发执行会互相覆盖。
+        /// 用非阻塞获取(<c>Wait(0)</c>):拿不到就直接拒绝并提示,而不是排队 ——
+        /// 排队只是把同一个破坏性操作稍后再执行一遍。
+        /// </summary>
+        private readonly SemaphoreSlim _operationGate = new(1, 1);
+
+        /// <summary>因已有插件操作在进行而拒绝执行的返回码(不是命令自身的退出码)。</summary>
+        public const int RejectedExitCode = -2;
 
         /// <summary>
         /// 拉取插件目录用的 HTTP 客户端。设置 User-Agent:部分 CDN/镜像会拒绝没有 UA 的请求。
@@ -362,7 +381,16 @@ namespace DSH_Launcher.Services
         /// <summary>是否有安装/卸载/启停操作正在进行。</summary>
         public bool IsBusy => this._busy;
 
-        public string LogText => this._log.ToString();
+        public string LogText
+        {
+            get
+            {
+                lock (this._logLock)
+                {
+                    return this._log.ToString();
+                }
+            }
+        }
 
         /// <summary>profile 目录(&lt;DSH_HOME&gt;/profiles/&lt;profile&gt;)。</summary>
         public static string ProfileDirectory => Path.Combine(DshHomeDirectory, "profiles", ProfileName);
@@ -405,7 +433,12 @@ namespace DSH_Launcher.Services
         public void AppendLog(string message)
         {
             var line = message.EndsWith('\n') ? message : message + "\r\n";
-            this._log.Append(line);
+            lock (this._logLock)
+            {
+                this._log.Append(line);
+            }
+
+            // 事件在锁外触发:处理器会 Post 到 UI 线程,放在锁里没有好处,只会扩大临界区
             LogAppended?.Invoke(line);
         }
 
@@ -418,7 +451,11 @@ namespace DSH_Launcher.Services
 
         public void ClearLog()
         {
-            this._log.Clear();
+            lock (this._logLock)
+            {
+                this._log.Clear();
+            }
+
             LogsCleared?.Invoke();
         }
 
@@ -846,12 +883,19 @@ namespace DSH_Launcher.Services
         /// 安装插件。<paramref name="spec"/> 可以是包名、<c>@scope/name</c>、版本范围、
         /// tarball/本地路径或 git 地址(直接交给 pnpm add)。
         /// </summary>
-        public async Task<bool> InstallAsync(string spec)
+        public async Task<bool> InstallAsync(string spec) => await this.InstallCoreAsync(spec) == 0;
+
+        /// <summary>
+        /// 安装插件的实现,返回 <c>dsh plugin</c> 的退出码(可能是 <see cref="RejectedExitCode"/>)。
+        /// 把退出码交给调用方,是为了让目录安装能区分“确实装不上”(该回退到备选来源)
+        /// 与“被并发互斥拒绝”(回退也只会被再拒一次)。
+        /// </summary>
+        private async Task<int> InstallCoreAsync(string spec)
         {
             spec = NormalizeSpec(spec);
             if (spec.Length == 0)
             {
-                return false;
+                return -1;
             }
 
             var exitCode = await RunDshPluginAsync(
@@ -861,12 +905,18 @@ namespace DSH_Launcher.Services
             if (exitCode == 0)
             {
                 this.AppendSystemLog($"已安装插件 {spec}");
-                return true;
+                return 0;
+            }
+
+            if (exitCode == RejectedExitCode)
+            {
+                // 拒绝原因已由 RunDshPluginAsync 写进日志
+                return RejectedExitCode;
             }
 
             this.AppendSystemLog($"安装插件失败(退出代码 {exitCode}): {spec}");
             this.AppendHintForExitCode(exitCode);
-            return false;
+            return exitCode;
         }
 
         /// <summary>
@@ -885,28 +935,23 @@ namespace DSH_Launcher.Services
             }
 
             this.AppendSystemLog($"从目录安装 {entry.Name}(来源 {spec})");
-            if (await this.InstallAsync(spec))
+            var exitCode = await this.InstallCoreAsync(spec);
+            if (exitCode == 0)
             {
                 return true;
+            }
+
+            if (exitCode == RejectedExitCode)
+            {
+                // 被并发互斥拒绝:换备选来源重试同样会被拒绝,没必要再试
+                return false;
             }
 
             var fallback = entry.FallbackInstallSpec;
             if (fallback.Length > 0 && !string.Equals(fallback, spec, StringComparison.Ordinal))
             {
                 this.AppendSystemLog($"{entry.Name}: 首选项装不上,回退到目录给的备选来源");
-                var fallbackSpec = NormalizeSpec(fallback);
-                var exitCode = await RunDshPluginAsync(
-                    $"add {PlatformProcess.Quote(fallbackSpec)}",
-                    $"> dsh plugin --profile {ProfileName} add {fallbackSpec}");
-
-                if (exitCode == 0)
-                {
-                    this.AppendSystemLog($"已安装插件 {fallbackSpec}");
-                    return true;
-                }
-
-                this.AppendSystemLog($"安装插件失败(退出代码 {exitCode}): {fallbackSpec}");
-                this.AppendHintForExitCode(exitCode);
+                return await this.InstallCoreAsync(fallback) == 0;
             }
 
             return false;
@@ -928,6 +973,12 @@ namespace DSH_Launcher.Services
             {
                 this.AppendSystemLog($"已卸载插件 {packageName}");
                 return true;
+            }
+
+            if (exitCode == RejectedExitCode)
+            {
+                // 拒绝原因已由 RunDshPluginAsync 写进日志
+                return false;
             }
 
             this.AppendSystemLog($"卸载插件失败(退出代码 {exitCode}): {packageName}");
@@ -1094,6 +1145,14 @@ namespace DSH_Launcher.Services
         /// <summary>拼接 dsh plugin 的完整参数(带引号),并在页面日志里回显。</summary>
         private async Task<int> RunDshPluginAsync(string pluginArguments, string echo)
         {
+            // 同一时刻只允许一个插件变更操作:并发跑两个 pnpm 会互相覆盖 profile 的包清单
+            // (列表行上的「安装」不受忙碌态禁用影响,连点两次就会撞上)
+            if (!this._operationGate.Wait(0))
+            {
+                this.AppendLog("已有插件操作正在进行(安装/卸载),本次操作已忽略,请等它结束后重试。\r\n");
+                return RejectedExitCode;
+            }
+
             this._busy = true;
             StateChanged?.Invoke();
             try
@@ -1114,12 +1173,19 @@ namespace DSH_Launcher.Services
             finally
             {
                 this._busy = false;
+                this._operationGate.Release();
                 StateChanged?.Invoke();
             }
         }
 
         private void AppendHintForExitCode(int exitCode)
         {
+            if (exitCode == RejectedExitCode)
+            {
+                // 并发互斥拒绝:原因已经写在日志里,不要再补"git 来源"那类与本次无关的提示
+                return;
+            }
+
             if (exitCode == 127)
             {
                 this.AppendLog("提示:未找到 pnpm。请先执行 npm install -g pnpm 后重试。\r\n");

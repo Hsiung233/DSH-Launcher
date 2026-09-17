@@ -96,7 +96,28 @@ dotnet run --project "DSH Launcher/DSH Launcher.csproj"
 
 > 构建前建议先结束正在运行的实例（`Stop-Process -Name "DSH Launcher"`），否则输出程序集可能被占用。
 
-发行版另附 `Properties/PublishProfiles/FolderProfile.pubxml` 发布配置。
+发行版另附 `Properties/PublishProfiles/DSH Launcher_Windows_x64.pubxml` 发布配置。
+
+### 打包安装程序（Inno Setup）
+
+1. 发布应用（框架依赖版，要求用户机器已装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)）：
+
+   ```powershell
+   dotnet publish "DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
+   ```
+
+   输出目录为 `DSH Launcher/bin/Publish/DSH Launcher_Windows_x64`（与 `installer.iss` 里的
+   `MyPublishDir` 对应）。
+
+2. 用 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 打开 `Setup/installer.iss` 编译，
+   输出 `Setup/DSHLauncher-Setup-x64.exe`。
+
+安装程序内置 .NET 10 Desktop Runtime 检测：缺失时引导用户到官网下载后再装；支持中文向导、
+开始菜单/桌面快捷方式与卸载。
+
+安装/卸载时会检测应用的单实例 Mutex，若应用正在运行（常驻托盘）会提示先关闭，避免文件被占用。
+**卸载会一并清理用户数据**（`%APPDATA%\DSH Launcher` 与 `%LOCALAPPDATA%\DSH Launcher` 下的设置、日志、
+窗口状态记忆，以及 WebView2 缓存），不留残留。
 
 ---
 
@@ -125,7 +146,9 @@ DSH Launcher/
     WindowStateService.cs         窗口位置/尺寸/最大化状态记忆
     TrayService.cs                系统托盘图标与交互
     AppLogService.cs              应用日志文件
+  Properties/PublishProfiles/     dotnet publish 发布配置（DSH Launcher_Windows_x64）
 
+Setup/                            Inno Setup 安装包脚本（installer.iss）与产物输出
 docs/screenshots/                 README 中使用的界面截图
 ```
 

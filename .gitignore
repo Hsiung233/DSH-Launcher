@@ -7,3 +7,5 @@
 /DSH Launcher/.vscode
 /DSH Launcher/bin
 /DSH Launcher/obj
+# Inno Setup 安装包产物(Setup\installer.iss 的 OutputDir)
+/Setup/*.exe

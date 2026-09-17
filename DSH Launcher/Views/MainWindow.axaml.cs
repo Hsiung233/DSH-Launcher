@@ -29,19 +29,8 @@ namespace DSH_Launcher.Views
                 OperatingSystem.IsWindows() ? WindowTransparencyLevel.Mica : WindowTransparencyLevel.Blur,
             };
 
-            // 设置窗口/任务栏图标(Assets\logo-512.png 随应用部署)
-            try
-            {
-                var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "logo-512.png");
-                if (File.Exists(iconPath))
-                {
-                    this.Icon = new WindowIcon(new Bitmap(iconPath));
-                }
-            }
-            catch (Exception)
-            {
-                // 图标加载失败不影响功能
-            }
+            // 设置窗口/任务栏图标(logo-512.png 已嵌入程序集资源,见 AppIcon.LoadLogo512)
+            this.Icon = AppIcon.LoadLogo512();
 
             // 恢复上次的位置/大小与最大化状态;没有有效记录时保持 XAML 初始尺寸 1280×720
             var restoredBounds = WindowStateService.Instance.RestoreMainWindow(this);

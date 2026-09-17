@@ -6,16 +6,15 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
+    <Platforms>AnyCPU</Platforms>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
   <ItemGroup>
-    <AvaloniaResource Include="Assets\**" Exclude="Assets\logo.ico;Assets\logo-512.png" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- logo 需要随应用部署(托盘/窗口图标从文件加载) -->
-    <Content Include="Assets\logo.ico" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\logo-512.png" CopyToOutputDirectory="PreserveNewest" />
+    <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,4 +30,13 @@
     </PackageReference>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
+
+  <Target Name="RemoveSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <_SymbolsToExclude Include="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+      <ResolvedFileToPublish Remove="@(_SymbolsToExclude)" />
+    </ItemGroup>
+    <Message Importance="high" Condition="'@(_SymbolsToExclude)' != ''"
+      Text="已从发布输出排除符号文件: @(_SymbolsToExclude->'%(Filename)%(Extension)', ', ')" />
+  </Target>
 </Project>

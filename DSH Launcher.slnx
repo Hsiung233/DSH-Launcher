@@ -1,3 +1,5 @@
 <Solution>
-  <Project Path="DSH Launcher/DSH Launcher.csproj" />
+  <Project Path="DSH Launcher/DSH Launcher.csproj">
+    <Build Project="false" />
+  </Project>
 </Solution>

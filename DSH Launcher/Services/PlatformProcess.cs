@@ -100,6 +100,15 @@ namespace DSH_Launcher.Services
 
         private static Encoding CreateOemEncoding()
         {
+            // ⚠ 必须先注册代码页提供程序:.NET (Core) 起默认的 EncodingProvider 只认 Unicode 系列,
+            // 中文 Windows 的 GBK/936 不在其中 —— 不注册时 GetEncoding(936) 会抛
+            // NotSupportedException,下面这个 catch 就把 OemEncoding 静默退化成 UTF-8,
+            // 于是 DecodeChildOutputLine 的"严格 UTF-8 失败 → 回退 OEM 代码页"分支永远解不出
+            // cmd.exe 自己写的中文消息(GBK 字节),只能得到 U+FFFD 乱码。
+            // 放在这里而不是静态构造函数:静态字段初始化器(含 OemEncoding)在静态构造函数体之前执行。
+            // CodePagesEncodingProvider 由共享框架提供,不需要额外的 NuGet 包。
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
             try
             {
                 return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);

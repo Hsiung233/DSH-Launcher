@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace DSH_Launcher.Services
@@ -25,6 +26,15 @@ namespace DSH_Launcher.Services
 
         private Process? _process;
         private readonly StringBuilder _log = new();
+
+        /// <summary>
+        /// 日志缓冲区的锁。日志同时被多个线程写:stdout/stderr 的异步回调(线程池)、
+        /// RunStreamingAsync 的安装输出回调、UI 线程的 AppendSystemLog;读侧还有 LogText、
+        /// TryRecordStartFailure 与 ClearLog。StringBuilder 不是线程安全的,并发写会串行化失败
+        /// (字被吞/错位),并发"读+清空"还会让 ToString(start, length) 抛 ArgumentOutOfRangeException。
+        /// </summary>
+        private readonly Lock _logLock = new();
+
         private DateTime _startTimeUtc = DateTime.MinValue;
         private int _lastStartLogMark;
         private volatile bool _stopRequestedByUser;
@@ -48,10 +58,20 @@ namespace DSH_Launcher.Services
 
         private static readonly Regex WebUrlRegex = GetWebUrlRegex();
 
-        public bool IsRunning => this._process is { HasExited: false };
+        public bool IsRunning => IsAlive(this._process);
+
         public string? InstalledVersion { get; private set; }
         public bool IsInstalling { get; private set; }
-        public string LogText => this._log.ToString();
+        public string LogText
+        {
+            get
+            {
+                lock (this._logLock)
+                {
+                    return this._log.ToString();
+                }
+            }
+        }
 
         /// <summary>npm 上的最新版本号;尚未检查或检查失败时为 null。</summary>
         public string? LatestVersion { get; private set; }
@@ -63,7 +83,39 @@ namespace DSH_Launcher.Services
             && CompareVersions(this.LatestVersion, this.InstalledVersion) > 0;
 
         /// <summary>运行中进程的 PID;未运行时为 null。</summary>
-        public int? ProcessId => this._process is { HasExited: false } p ? p.Id : null;
+        public int? ProcessId
+        {
+            get
+            {
+                var process = this._process;
+                return IsAlive(process) ? process!.Id : null;
+            }
+        }
+
+        /// <summary>
+        /// 进程是否仍活着。
+        /// ⚠ 不能直接写 <c>process.HasExited</c>:对**从未启动**的 Process(例如
+        /// <c>process.Start()</c> 抛异常后残留在 <c>_process</c> 上的那个)访问 HasExited 会抛
+        /// <see cref="InvalidOperationException"/>("No process is associated with this object"),
+        /// 而本判断会被 UI 状态刷新、停止/重启、关机兜底等一大票路径读取,抛出去就是未处理异常。
+        /// </summary>
+        private static bool IsAlive(Process? process)
+        {
+            if (process is null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return !process.HasExited;
+            }
+            catch (InvalidOperationException)
+            {
+                // 从未启动成功(ObjectDisposedException 也派生自 InvalidOperationException,一并覆盖)
+                return false;
+            }
+        }
 
         /// <summary>
         /// 本次运行的启动时刻(本地时间);未运行时为 null。
@@ -114,11 +166,17 @@ namespace DSH_Launcher.Services
         /// </summary>
         private void AppendLog(string text, bool detectWebUrl = false)
         {
-            this._log.Append(text);
+            lock (this._logLock)
+            {
+                this._log.Append(text);
+            }
+
             if (detectWebUrl)
             {
                 this.TryDetectWebUrl(text);
             }
+
+            // 事件在锁外触发:处理器会 Post 到 UI 线程,放在锁里没有好处,只会扩大临界区
             LogAppended?.Invoke(text);
         }
 
@@ -136,7 +194,11 @@ namespace DSH_Launcher.Services
         /// </summary>
         public void ClearLog()
         {
-            this._log.Clear();
+            lock (this._logLock)
+            {
+                this._log.Clear();
+            }
+
             LogsCleared?.Invoke();
         }
 
@@ -347,6 +409,7 @@ namespace DSH_Launcher.Services
             //    Windows: cmd.exe /c call "<shim>" args(.cmd shim 必须经 cmd 解释);
             //    类 Unix: /bin/zsh -lc '<shim> args'(经登录 shell 装配 PATH,才能找到 node)。
             Process process;
+            var started = false;
             try
             {
                 // 这里**不**注入“环境设置”的代理:这是本机服务,WebView/浏览器要访问 127.0.0.1,
@@ -379,6 +442,7 @@ namespace DSH_Launcher.Services
                 // TryDetectWebUrl 会因 !IsRunning 跳过 Web 地址检测(Web 地址只打印一次,错过即丢失)
                 this._process = process;
                 process.Start();
+                started = true;
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
 
@@ -389,6 +453,25 @@ namespace DSH_Launcher.Services
             {
                 this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n无法启动进程:\r\n{ex}";
                 this.AppendLog($"[启动失败] {ex.Message}\r\n");
+
+                // 进程压根没起来时(process.Start() 抛异常),_process 里留着的是一个"从未启动"的
+                // Process 对象 —— 之后任何 IsRunning/ProcessId/Stop 都会因 HasExited 抛
+                // InvalidOperationException。必须把它摘掉,失败的实例也一并释放。
+                // 反之,进程已经启动成功(后面某一行才抛)时必须保留跟踪,否则会漏掉一个在跑的 dsh。
+                if (!started)
+                {
+                    var failed = this._process;
+                    this._process = null;
+                    try
+                    {
+                        failed?.Dispose();
+                    }
+                    catch
+                    {
+                        // 释放失败不影响后续流程
+                    }
+                }
+
                 return false;
             }
 
@@ -454,7 +537,16 @@ namespace DSH_Launcher.Services
             }
 
             this._startFailureHandled = true;
-            var output = this._log.ToString(logMark, this._log.Length - logMark).TrimEnd();
+
+            // 取子串必须在锁内且用实际长度:调用方可能并发点了「清空」,用旧的 Length 去取
+            // 会抛 ArgumentOutOfRangeException(在 async void 事件路径上就是崩溃)
+            string output;
+            lock (this._logLock)
+            {
+                var start = Math.Clamp(logMark, 0, this._log.Length);
+                output = this._log.ToString(start, this._log.Length - start).TrimEnd();
+            }
+
             var exitCode = 0;
             try
             {
@@ -485,7 +577,7 @@ namespace DSH_Launcher.Services
 
             // 标记为用户主动停止,避免退出回调误判为启动失败
             this._stopRequestedByUser = true;
-            if (!process.HasExited)
+            if (IsAlive(process))
             {
                 try
                 {
@@ -581,7 +673,7 @@ namespace DSH_Launcher.Services
             this._stopRequestedByUser = true;
 
             var process = this._process;
-            if (process is not null && !process.HasExited)
+            if (process is not null && IsAlive(process))
             {
                 try
                 {
