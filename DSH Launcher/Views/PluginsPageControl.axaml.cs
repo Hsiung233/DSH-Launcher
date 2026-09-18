@@ -65,22 +65,19 @@ namespace DSH_Launcher.Views
         /// <summary>卸载的二次确认状态(点击「卸载」→ 变成「确认卸载」,5 秒内再点才真的卸载)。</summary>
         private string? _pendingUninstall;
 
-        private bool _copyFeedbackBusy;
+        /// <summary>输出浮窗正文的刷新节流器(理由见 <see cref="LogAppendThrottle"/>)。</summary>
+        private readonly LogAppendThrottle _pluginLogThrottle;
 
-        /// <summary>
-        /// 输出浮窗正文的刷新间隔。理由同首页:<c>pnpm</c>/<c>dsh</c> 输出一秒可能几百行,
-        /// 而面板是"整段文本塞进 SelectableTextBlock + Wrap",逐行改 Text 会让整段文本反复
-        /// 重新塑形/排版,输出一刷屏 UI 线程就被钉死(窗口"未响应")。
-        /// </summary>
-        private static readonly TimeSpan PluginLogRefreshInterval = TimeSpan.FromMilliseconds(200);
-
-        /// <summary>已登记一次待执行的浮窗刷新(节流:同一时间窗内多次追加只刷一次)。</summary>
-        private bool _pluginLogRefreshPending;
+        /// <summary>「复制」按钮的反馈。</summary>
+        private readonly CopyFeedback _logCopy;
 
         public PluginsPageControl()
         {
             InitializeComponent();
             AttachedToVisualTree += this.OnPageAttached;
+
+            this._pluginLogThrottle = new LogAppendThrottle(this.RefreshPluginLog);
+            this._logCopy = new CopyFeedback(this.CopyPluginLogButtonText, "复制");
 
             // Esc 关闭输出浮窗。用**隧道**阶段先拿到并标记已处理:
             // 本页之外(FluentAvalonia 的 FANavigationView)也用了 Esc,不能让它抢走。
@@ -787,19 +784,12 @@ namespace DSH_Launcher.Views
                 this.PluginLogUnreadDot.IsVisible = true;
             }
 
-            // 正文刷新走节流(见 PluginLogRefreshInterval),内容从服务侧现取
-            if (this._pluginLogRefreshPending)
-            {
-                return;
-            }
-
-            this._pluginLogRefreshPending = true;
-            DispatcherTimer.RunOnce(this.OnPluginLogRefreshTick, PluginLogRefreshInterval, DispatcherPriority.Background);
+            // 正文刷新走节流(见 LogAppendThrottle),内容从服务侧现取
+            this._pluginLogThrottle.Schedule();
         });
 
-        private void OnPluginLogRefreshTick()
+        private void RefreshPluginLog()
         {
-            this._pluginLogRefreshPending = false;
             this.PluginLogTextBlock.Text = this._plugins.LogText;
 
             // 浮窗关着时滚动没有意义(也没得看)
@@ -855,55 +845,10 @@ namespace DSH_Launcher.Views
 
         private async void OnCopyPluginLogClick(object? sender, RoutedEventArgs e)
         {
-            if (await this.TryCopyTextAsync(this._plugins.LogText))
-            {
-                await this.FlashCopiedAsync();
-            }
+            await this._logCopy.CopyAsync(this, this._plugins.LogText);
         }
 
         private void OnClearPluginLogClick(object? sender, RoutedEventArgs e) => this._plugins.ClearLog();
 
-        /// <summary>把文本写入剪贴板;成功返回 true。剪贴板不可用时静默失败。</summary>
-        private async Task<bool> TryCopyTextAsync(string text)
-        {
-            try
-            {
-                var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-                if (clipboard is null)
-                {
-                    return false;
-                }
-
-                var transfer = new DataTransfer();
-                transfer.Add(DataTransferItem.CreateText(text));
-                await clipboard.SetDataAsync(transfer);
-                return true;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        }
-
-        /// <summary>复制反馈:按钮文字临时变成「已复制」,1.5 秒后还原(防连点)。</summary>
-        private async Task FlashCopiedAsync()
-        {
-            if (this._copyFeedbackBusy)
-            {
-                return;
-            }
-
-            this._copyFeedbackBusy = true;
-            try
-            {
-                this.CopyPluginLogButtonText.Text = "已复制";
-                await Task.Delay(1500);
-            }
-            finally
-            {
-                this.CopyPluginLogButtonText.Text = "复制";
-                this._copyFeedbackBusy = false;
-            }
-        }
     }
 }

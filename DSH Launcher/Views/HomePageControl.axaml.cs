@@ -22,9 +22,6 @@ namespace DSH_Launcher.Views
         // 端口控件回填期间置位,避免把“回填”当成用户修改而触发保存
         private bool _launchOptionsInitializing;
 
-        // 复制反馈期间置位,避免连点导致文字来回跳
-        private bool _copyFeedbackBusy;
-
         // 环境信息:静态项(Node/npm/dsh 路径)首次查得后缓存,避免每次展开都起子进程
         private bool _environmentLoaded;
         private string? _envNode;
@@ -38,24 +35,22 @@ namespace DSH_Launcher.Views
         private const int MinPort = 1;
         private const int MaxPort = 65535;
 
-        /// <summary>
-        /// 日志面板正文的刷新间隔。
-        /// <para>
-        /// ⚠ 为什么不能逐行刷新:日志一秒可能来几百行,而面板是"整段文本塞进一个
-        /// SelectableTextBlock + Wrap"的实现 —— 每次改 Text 都要**整段重新塑形/排版**
-        /// (外加一次 O(n) 的字符串复制),行数一多就是平方级。实测:<c>dsh web</c> 启动失败
-        /// 刷出 43 万字符时,UI 线程被钉死在 Avalonia 文本排版里,窗口直接"未响应"。
-        /// 所以这里按固定间隔把同一窗口内的多行合并成**一次**刷新,服务侧另有限长兜底。
-        /// </para>
-        /// </summary>
-        private static readonly TimeSpan LogRefreshInterval = TimeSpan.FromMilliseconds(200);
+        /// <summary>日志面板的刷新节流器(间隔与“为什么不能逐行刷新”见 <see cref="LogAppendThrottle"/>)。</summary>
+        private readonly LogAppendThrottle _logThrottle;
 
-        /// <summary>已登记一次待执行的日志刷新(节流:同一时间窗内多次追加只刷一次)。</summary>
-        private bool _logRefreshPending;
+        /// <summary>三处「复制」按钮的反馈(复制成功才把按钮文字闪成「已复制」)。</summary>
+        private readonly CopyFeedback _webUrlCopy;
+        private readonly CopyFeedback _logCopy;
+        private readonly CopyFeedback _envCopy;
 
         public HomePageControl()
         {
             InitializeComponent();
+
+            this._logThrottle = new LogAppendThrottle(this.UpdateLog);
+            this._webUrlCopy = new CopyFeedback(this.CopyWebUrlButtonText, "复制URL");
+            this._logCopy = new CopyFeedback(this.CopyLogButtonText, "复制");
+            this._envCopy = new CopyFeedback(this.CopyEnvButtonText, "复制");
 
             // 对应 WinUI 版的 Loaded/Unloaded:服务是单例,进程保持运行;进出页面时挂接/解除事件
             AttachedToVisualTree += OnPageAttached;
@@ -224,40 +219,17 @@ namespace DSH_Launcher.Views
 
         private void Dsh_LogAppended(string text)
         {
-            // 注意:这里**不能**直接 LogTextBlock.Text += text(理由见 LogRefreshInterval),
-            // 只登记"待刷新",由定时器按固定间隔整段同步一次(文本内容从服务侧现取)。
+            // 注意:这里**不能**直接 LogTextBlock.Text += text(理由见 LogAppendThrottle),
+            // 只登记"待刷新",由节流器按固定间隔整段同步一次(文本内容从服务侧现取)。
             if (Dispatcher.UIThread.CheckAccess())
             {
-                this.ScheduleLogRefresh();
+                this._logThrottle.Schedule();
             }
             else
             {
                 // 事件通常在后台线程触发(stdout/stderr 回调)
-                Dispatcher.UIThread.Post(this.ScheduleLogRefresh);
+                Dispatcher.UIThread.Post(this._logThrottle.Schedule);
             }
-        }
-
-        /// <summary>
-        /// 登记一次日志刷新。已有待执行的任务时直接合并 —— 这是**节流**而不是防抖:
-        /// 防抖(每次到达都重置计时)在持续刷屏时永远不会触发,面板反而彻底不刷新了。
-        /// </summary>
-        private void ScheduleLogRefresh()
-        {
-            if (this._logRefreshPending)
-            {
-                return;
-            }
-
-            this._logRefreshPending = true;
-
-            // Background 优先级:等本轮的布局/渲染做完再刷新,不跟渲染抢时间片
-            DispatcherTimer.RunOnce(this.OnLogRefreshTick, LogRefreshInterval, DispatcherPriority.Background);
-        }
-
-        private void OnLogRefreshTick()
-        {
-            this._logRefreshPending = false;
-            this.UpdateLog();
         }
 
         private void Dsh_StateChanged()
@@ -458,19 +430,13 @@ namespace DSH_Launcher.Views
                 return;
             }
 
-            if (await this.TryCopyTextAsync(url))
-            {
-                await FlashCopiedAsync(this.CopyWebUrlButtonText, "复制URL");
-            }
+            await this._webUrlCopy.CopyAsync(this, url);
         }
 
         /// <summary>复制日志面板中的全部内容。</summary>
         private async void OnCopyLogClick(object? sender, RoutedEventArgs e)
         {
-            if (await this.TryCopyTextAsync(this._dsh.LogText))
-            {
-                await FlashCopiedAsync(this.CopyLogButtonText, "复制");
-            }
+            await this._logCopy.CopyAsync(this, this._dsh.LogText);
         }
 
         /// <summary>清空日志面板(仅面板;app.log 文件不受影响)。</summary>
@@ -492,49 +458,6 @@ namespace DSH_Launcher.Views
             catch (Exception ex)
             {
                 AppLogService.Write($"[应用] 打开日志文件失败: {ex.Message}");
-            }
-        }
-
-        /// <summary>把文本写入剪贴板;成功返回 true。剪贴板不可用时静默失败。</summary>
-        private async Task<bool> TryCopyTextAsync(string text)
-        {
-            try
-            {
-                var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-                if (clipboard is null)
-                {
-                    return false;
-                }
-
-                var transfer = new Avalonia.Input.DataTransfer();
-                transfer.Add(Avalonia.Input.DataTransferItem.CreateText(text));
-                await clipboard.SetDataAsync(transfer);
-                return true;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        }
-
-        /// <summary>复制成功后把按钮文字临时换成“已复制”作为反馈(同一时刻只允许一个反馈在跑)。</summary>
-        private async Task FlashCopiedAsync(TextBlock label, string originalText)
-        {
-            if (this._copyFeedbackBusy)
-            {
-                return;
-            }
-
-            this._copyFeedbackBusy = true;
-            try
-            {
-                label.Text = "已复制";
-                await Task.Delay(1500);
-                label.Text = originalText;
-            }
-            finally
-            {
-                this._copyFeedbackBusy = false;
             }
         }
 
@@ -613,11 +536,6 @@ namespace DSH_Launcher.Views
 
         /// <summary>复制环境信息。</summary>
         private async void OnCopyEnvClick(object? sender, RoutedEventArgs e)
-        {
-            if (await this.TryCopyTextAsync(this.BuildEnvironmentText()))
-            {
-                await FlashCopiedAsync(this.CopyEnvButtonText, "复制");
-            }
-        }
+            => await this._envCopy.CopyAsync(this, this.BuildEnvironmentText());
     }
 }
