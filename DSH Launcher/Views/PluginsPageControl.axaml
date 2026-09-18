@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="using:FluentAvalonia.UI.Controls"
-             xmlns:svc="using:DSH_Launcher.Services"
+             xmlns:models="using:DSH_Launcher.Models"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="640"
@@ -30,7 +30,7 @@
                  右边距 16:Fluent 的滚动条是 overlay(画在内容之上),只留 8 会压住行尾的按钮。
                  最左是批量选择框:绑定在数据对象的 IsSelected 上 ——
                  列表是虚拟化的(容器会被回收),勾选态存在行上会错位 -->
-            <DataTemplate x:Key="PluginRowTemplate" x:DataType="svc:PluginEntry">
+            <DataTemplate x:Key="PluginRowTemplate" x:DataType="models:PluginEntry">
                 <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="0,0,0,1"
                         Padding="0 8 16 8">
@@ -86,7 +86,7 @@
 
             <!-- 插件目录条目行(数据来自策展目录,不是 npm registry)。
                  右边距 16 同上:给 overlay 滚动条留出槽位 -->
-            <DataTemplate x:Key="CatalogRowTemplate" x:DataType="svc:PluginCatalogEntry">
+            <DataTemplate x:Key="CatalogRowTemplate" x:DataType="models:PluginCatalogEntry">
                 <Border BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="0,0,0,1"
                         Padding="0 10 16 10">

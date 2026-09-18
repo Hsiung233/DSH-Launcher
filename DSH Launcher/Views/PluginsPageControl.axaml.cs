@@ -9,6 +9,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using DSH_Launcher.Models;
 using DSH_Launcher.Services;
 
 namespace DSH_Launcher.Views

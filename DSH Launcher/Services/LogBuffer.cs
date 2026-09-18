@@ -24,6 +24,12 @@ namespace DSH_Launcher.Services
     /// </summary>
     public sealed class LogBuffer
     {
+        /// <summary>
+        /// 默认字符数上限。两个日志面板(首页 / 插件页)历史上各写了一份同值的常量,
+        /// 现在唯一定义在此 —— 这个值只由"界面能被多长的文本拖慢"决定,与哪个服务无关。
+        /// </summary>
+        public const int DefaultMaxChars = 50_000;
+
         /// <summary>"已省略"提示行的格式(补在保留内容的开头)。</summary>
         private const string OmittedNoteFormat = "…… 日志过长,已省略更早的 {0} 字符 ……\r\n";
 
