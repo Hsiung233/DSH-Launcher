@@ -2,6 +2,7 @@ using System;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using DSH_Launcher.Models;
 using DSH_Launcher.Services;
 
 namespace DSH_Launcher.Views

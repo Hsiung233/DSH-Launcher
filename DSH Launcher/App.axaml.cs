@@ -8,6 +8,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using DSH_Launcher.Models;
 using DSH_Launcher.Services;
 using DSH_Launcher.Views;
 

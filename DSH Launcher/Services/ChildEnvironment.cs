@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Security.Principal;
 using System.Text.RegularExpressions;
+using DSH_Launcher.Models;
 
 namespace DSH_Launcher.Services
 {
