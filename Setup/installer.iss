@@ -51,6 +51,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [CustomMessages]
 chinesesimplified.InstallNeedNetRuntime=检测到缺少 .NET 10 Desktop Runtime,点击“确定”打开官网下载页面,安装运行时后重新运行本安装程序。
 english.InstallNeedNetRuntime=.NET 10 Desktop Runtime is not installed. Click OK to open the download page, install the runtime, then run this installer again.
+; 卸载时询问是否清理用户数据(弹框在 [Code] 的 CurUninstallStepChanged 里拼装,见那里的注释)。
+; 注意:换行在代码里用 #13#10 拼,不要在这里写 %n —— MsgBox 不处理 %n。
+chinesesimplified.UninstallUserDataAsk=是否同时删除用户数据?
+english.UninstallUserDataAsk=Also delete your user data?
+chinesesimplified.UninstallUserDataNote=「是」= 删除上面列出的目录(设置、日志、窗口位置记忆、WebView2 缓存),删除后无法恢复;「否」= 保留这些目录,以后重新安装时可继续使用原有设置。
+english.UninstallUserDataNote=Yes = delete the folders listed above (settings, logs, window position, WebView2 cache) — this cannot be undone. No = keep them so a later reinstall reuses your current settings.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -67,21 +73,20 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; 卸载时连用户数据一起清掉(不保留任何残留)。
-; 应用写入的两处根目录(见 PlatformProcess.RoamingAppDataDirectory / LocalAppDataDirectory):
-;   %APPDATA%\DSH Launcher\Settings\settings.json          设置
-;   %LOCALAPPDATA%\DSH Launcher\Settings\app.log           应用日志
-;   %LOCALAPPDATA%\DSH Launcher\Settings\window-state.json 窗口位置/尺寸记忆
-;   %LOCALAPPDATA%\DSH Launcher\WebView2\                  WebView2 用户数据目录(Cookie/缓存等,
-;                                                          见 WebOpener.OnWebViewEnvironmentRequested)
-Type: filesandordirs; Name: "{userappdata}\{#MyAppName}"
-Type: filesandordirs; Name: "{localappdata}\{#MyAppName}"
+; 用户数据**不在这里删**:卸载时由 [Code] 的 CurUninstallStepChanged 弹框让用户选择是否清理
+; (静默卸载用 /CLEANDATA 或 /KEEPDATA 指定,默认保留)。这里保留空段落只作说明。
 
 [Code]
 // .NET 安装器把 InstalledVersions 键写进【32 位】注册表视图(WOW6432Node),
 // 而本安装器在 64 位模式下运行时 HKLM 指向 64 位视图 ⇒ 必须显式枚举两个视图。
 const
   DesktopRuntimeKey = 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App';
+
+  // 卸载时“是否清理用户数据”的命令行开关(静默卸载没法弹框,只能靠它表达):
+  //   /CLEANDATA  清理(不弹框,直接删)
+  //   /KEEPDATA   保留(不弹框,非静默时等价于在弹框里选“否”)
+  SwitchCleanData = '/CLEANDATA';
+  SwitchKeepData  = '/KEEPDATA';
 
 // 枚举某注册表视图下的值名(每个已安装补丁是一个值,如 "10.0.12"),找 10.x。
 // 注意:不能只判断子键是否存在 —— 装了 .NET 8 时子键同样存在。
@@ -160,4 +165,114 @@ begin
       ShellExecAsOriginalUser('open', 'https://dotnet.microsoft.com/download/dotnet/10.0', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
     Result := False; // 中止安装,等用户装好运行时
   end;
+end;
+
+// ---------------------------------------------------------------------------
+// 卸载:用户数据是否清理由用户决定(代替原来的 [UninstallDelete] 无条件删除)
+// ---------------------------------------------------------------------------
+// 应用写入的用户数据(见 PlatformProcess.RoamingAppDataDirectory / LocalAppDataDirectory
+// 与 WebOpener.OnWebViewEnvironmentRequested):
+//   %APPDATA%\DSH Launcher\Settings\settings.json             设置
+//   %LOCALAPPDATA%\DSH Launcher\Settings\app.log              应用日志
+//   %LOCALAPPDATA%\DSH Launcher\Settings\window-state.json    窗口位置/尺寸记忆
+//   %LOCALAPPDATA%\DSH Launcher\WebView2\                     WebView2 用户数据(Cookie/缓存)
+// (注意:Pascal Script 里 var 段不能写在函数之后,所以不设全局变量,选择结果在下面的过程内用)
+
+function UserDataDirRoaming: String;
+begin
+  Result := ExpandConstant('{userappdata}\{#MyAppName}');
+end;
+
+function UserDataDirLocal: String;
+begin
+  Result := ExpandConstant('{localappdata}\{#MyAppName}');
+end;
+
+// WebView2 的默认数据目录是 "<exe 所在目录>\<exe 名>.WebView2";正常情况下 WebOpener 会把它
+// 改到 %LOCALAPPDATA%(见 OnWebViewEnvironmentRequested),只有那次改写失败时才留在程序目录里。
+// 它位于程序目录内、且只是缓存(不是用户设置),所以**无条件**删掉 —— 否则卸载后 {app} 非空、
+// 整个安装目录都会残留下来。
+function WebView2FallbackDir: String;
+begin
+  Result := ExpandConstant('{app}\{#MyAppExeName}.WebView2');
+end;
+
+// 命令行里是否给了某个开关(/X 与 /X=1 两种写法都认)
+function HasCommandLineSwitch(const Switch: String): Boolean;
+var
+  I: Integer;
+  Arg: String;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+  begin
+    Arg := Uppercase(ParamStr(I));
+    if (Arg = Switch) or (Arg = Switch + '=1') then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
+// 删除一个用户数据目录(本来就不存在算成功),并把结果写进卸载日志
+function DeleteUserDataDir(const Dir: String): Boolean;
+begin
+  if not DirExists(Dir) then
+  begin
+    Log('用户数据目录不存在,跳过: ' + Dir);
+    Result := True;
+    Exit;
+  end;
+
+  Result := DelTree(Dir, True, True, True);
+  if Result then
+    Log('已删除用户数据目录: ' + Dir)
+  else
+    Log('删除用户数据目录失败(可能被占用): ' + Dir);
+end;
+
+// 弹框询问是否清理用户数据:把两个具体目录列出来,默认按钮是「否」(保留),避免误删
+function AskRemoveUserData: Boolean;
+var
+  Text: String;
+begin
+  Text :=
+      CustomMessage('UninstallUserDataAsk') + #13#10 + #13#10
+    + '    ' + UserDataDirRoaming + #13#10
+    + '    ' + UserDataDirLocal + #13#10 + #13#10
+    + CustomMessage('UninstallUserDataNote');
+
+  Result := MsgBox(Text, mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+end;
+
+// usUninstall = 已经过了 Inno 自带的「确定要卸载吗」与 AppMutex 的「应用正在运行,请先关闭」提示,
+// 此时再问用户数据怎么处理,用户点取消卸载时就不会被问。
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  RemoveData: Boolean;
+begin
+  if CurUninstallStep <> usUninstall then
+    Exit;
+
+  DeleteUserDataDir(WebView2FallbackDir);
+
+  if HasCommandLineSwitch(SwitchCleanData) then
+    RemoveData := True
+  else if HasCommandLineSwitch(SwitchKeepData) then
+    RemoveData := False
+  else if UninstallSilent then
+    // 静默卸载(/SILENT、/VERYSILENT)不能弹框:默认保留,要清理请显式加 /CLEANDATA
+    RemoveData := False
+  else
+    RemoveData := AskRemoveUserData;
+
+  if not RemoveData then
+  begin
+    Log('按用户选择保留用户数据: ' + UserDataDirRoaming + ' | ' + UserDataDirLocal);
+    Exit;
+  end;
+
+  DeleteUserDataDir(UserDataDirRoaming);
+  DeleteUserDataDir(UserDataDirLocal);
 end;

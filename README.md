@@ -131,8 +131,9 @@ dotnet publish "DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launche
 开始菜单/桌面快捷方式与卸载。
 
 安装/卸载时会检测应用的单实例 Mutex，若应用正在运行（常驻托盘）会提示先关闭，避免文件被占用。
-**卸载会一并清理用户数据**（`%APPDATA%\DSH Launcher` 与 `%LOCALAPPDATA%\DSH Launcher` 下的设置、日志、
-窗口状态记忆，以及 WebView2 缓存），不留残留。
+**卸载时会询问是否清理用户数据**：选「是」删除 `%APPDATA%\DSH Launcher` 与 `%LOCALAPPDATA%\DSH Launcher`
+（设置、日志、窗口状态记忆、WebView2 缓存），选「否」（默认按钮）保留，重新安装后可继续使用原设置。
+静默卸载（`/SILENT`、`/VERYSILENT`）不弹框、默认保留；要强制清理加 `/CLEANDATA`，强制保留加 `/KEEPDATA`。
 
 ---
 
