@@ -170,7 +170,10 @@ public sealed class CatalogLoadControllerTests
     [TestMethod]
     public async Task EnsureAsync_OnStartedOnlyFiresWhenLoadReallyStarts()
     {
-        this._cache[UrlB] = Catalog(UrlB);
+        // ⚠ 必须缓存**当前地址**:EnsureAsync 先解析 URL 再查缓存,`_currentUrl` 默认是 UrlA ——
+        // 旧版这里塞的是 UrlB,于是第一次调用根本没命中缓存、走了真实拉取(onStarted 被调),
+        // 断言"缓存命中不回调"永远失败(测试自身的搭建 bug,2026-09-19 修复)。
+        this._cache[UrlA] = Catalog(UrlA);
         this._load = _ => Task.FromResult(Catalog(UrlA));
         var controller = this.CreateController();
         var started = 0;
