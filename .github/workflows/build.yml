@@ -1,0 +1,31 @@
+name: build
+
+# 只在 Windows 上跑:项目是 WinExe + Windows 安装包脚本,跨平台构建验证价值有限。
+# 目的很窄 —— 保证"任何人推上来的代码都能编译、测试都能过",不负责发布与打包。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK(版本由 global.json 决定)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # -p:UsedAvaloniaProducts= 用于跳过 Avalonia 的遥测任务(它要往用户目录写 buildtasks.log,
+      # 写不进去会直接让构建失败 —— 受限环境下实测过),CI 上没必要冒这个风险。
+      - name: 构建应用(Release)
+        run: dotnet build "DSH Launcher.slnx" -c Release --nologo -p:UsedAvaloniaProducts=
+
+      # 测试项目不在 .slnx 里(见 slnx 内的说明),因此单独构建 + 测试。
+      - name: 构建测试项目
+        run: dotnet build "DSH Launcher.Tests/DSH Launcher.Tests.csproj" -c Release --nologo -p:UsedAvaloniaProducts=
+
+      - name: 运行测试
+        run: dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj" -c Release --no-build --nologo

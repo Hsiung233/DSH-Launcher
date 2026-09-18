@@ -1,0 +1,140 @@
+param(
+    [Parameter(Mandatory = $true)][ValidateSet('首页', '插件', '设置')][string]$Page,
+    [int]$TimeoutSeconds = 20
+)
+
+# 让 DSH Launcher 主窗口自主切换到指定页(首页/插件/设置),供自动化界面验证使用。
+#
+# 踩过的坑(务必保留这些做法,详见 ../SKILL.md):
+# 1) **必须先激活窗口**:FANavigationView 的导航项只有在窗口处于前台时,
+#    才会在 UIA 树里以 ListItem 暴露;否则只剩 Text,按 ListItem 查找一律失败,
+#    会误判成“设置页控件不存在”。
+# 2) **SelectionItemPattern.Select() 无效**:它返回 true,但页面不会切换
+#    (实测导航项的 IsSelected 也不变)。必须用真实鼠标点击。
+# 3) **每次点击前都要重新激活**:上一次点击/切页会改变前台状态,不重新激活则后续点击落空。
+# 4) 点击坐标取 ListItem 的 BoundingRectangle 中心。不要用同名的 Text 元素,
+#    实测它的矩形是错的(会点到窗口外)。
+# 5) 切页后控件是异步加载的,要轮询等待,不能固定 sleep。
+
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class NavClick {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+  public const uint DOWN = 0x0002, UP = 0x0004;
+  public static void Click(int x, int y) {
+    SetCursorPos(x, y);
+    System.Threading.Thread.Sleep(150);
+    mouse_event(DOWN, 0, 0, 0, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(80);
+    mouse_event(UP, 0, 0, 0, UIntPtr.Zero);
+  }
+}
+'@
+
+$ErrorActionPreference = 'Stop'
+
+# 从脚本位置向上找到仓库根(含 DSH Launcher.slnx 的目录)
+$repoRoot = $PSScriptRoot
+while ($repoRoot -and -not (Test-Path (Join-Path $repoRoot 'DSH Launcher.slnx'))) {
+    $parent = Split-Path -Parent $repoRoot
+    if (-not $parent -or $parent -eq $repoRoot) { break }
+    $repoRoot = $parent
+}
+
+function Get-AppWindow {
+    $root = [System.Windows.Automation.AutomationElement]::RootElement
+    $c = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, "DSH Launcher")
+    return $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $c)
+}
+
+function Activate-AppWindow($win) {
+    $h = [IntPtr]$win.Current.NativeWindowHandle
+    [void][NavClick]::ShowWindow($h, 9)          # SW_RESTORE
+    [void][NavClick]::SetForegroundWindow($h)
+    Start-Sleep -Milliseconds 700
+}
+
+function Get-NavItem($win, [string]$name) {
+    $liCond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::ListItem)
+    foreach ($el in $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $liCond)) {
+        if ($el.Current.Name -eq $name) { return $el }
+    }
+    return $null
+}
+
+function Get-CurrentPage($win) {
+    $c1 = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'SettingsScroll')
+    if ($win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c1)) { return '设置' }
+    # 插件页用 PluginsSubText(页头常驻文本;Grid/ItemsControl 这类 Panel 没有 UIA 对等体,查不到)
+    $cPlugins = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'PluginsSubText')
+    if ($win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cPlugins)) { return '插件' }
+    # 首页用 StatusText(常驻文本)。不要用 PortBox —— 它在 RunActionsPanel 里,
+    # 只有“已安装且未运行”时才存在,服务运行中查不到。
+    # (原先用 DshExpander;2026-09 首页去掉 Expander 后改为 StatusText)
+    $c2 = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'StatusText')
+    if ($win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c2)) { return '首页' }
+    return '未知'
+}
+
+$win = Get-AppWindow
+if (-not $win) {
+    # 主界面可能被隐藏到托盘(ShowMainWindowOnStartup=false 时默认如此):
+    # 再启动一个实例,借助单实例机制通知已有实例显示主界面。
+    $exe = Join-Path $repoRoot 'DSH Launcher\bin\Debug\net10.0\DSH Launcher.exe'
+    if (Test-Path $exe) {
+        Write-Host '主界面未出现,唤起中...'
+        Start-Process -FilePath $exe | Out-Null
+        for ($i = 0; $i -lt 20 -and -not $win; $i++) {
+            Start-Sleep -Milliseconds 500
+            $win = Get-AppWindow
+        }
+    }
+}
+if (-not $win) { Write-Host '无法获取主窗口'; exit 1 }
+
+Activate-AppWindow $win
+
+if ((Get-CurrentPage (Get-AppWindow)) -eq $Page) {
+    Write-Host "已在 '$Page' 页"
+    exit 0
+}
+
+$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+while ((Get-Date) -lt $deadline) {
+    # 每次点击前重新激活并重取矩形(前台状态与矩形都可能变化)
+    $win = Get-AppWindow
+    Activate-AppWindow $win
+
+    $win = Get-AppWindow
+    $item = Get-NavItem $win $Page
+    if ($item) {
+        $r = $item.Current.BoundingRectangle
+        $x = [int]($r.X + $r.Width / 2)
+        $y = [int]($r.Y + $r.Height / 2)
+        [NavClick]::Click($x, $y)
+        Write-Host "点击导航项 '$Page' 于 ($x, $y)"
+    }
+
+    for ($j = 0; $j -lt 8; $j++) {
+        Start-Sleep -Milliseconds 400
+        if ((Get-CurrentPage (Get-AppWindow)) -eq $Page) {
+            Write-Host "已切换到 '$Page' 页"
+            exit 0
+        }
+    }
+}
+
+Write-Host "超时:未能切换到 '$Page' 页"
+exit 1

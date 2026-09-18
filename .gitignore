@@ -1,11 +1,16 @@
+# 工具/IDE 的本地状态
 .commandcode
-.github/skills/dsh-launcher-ui-verify/
 .vs
-/DSH Launcher/*.user
-/DSH Launcher/**/*.user
 /DSH Launcher/.commandcode
 /DSH Launcher/.vscode
-/DSH Launcher/bin
-/DSH Launcher/obj
+
+# 构建产物:按目录名忽略,新增项目(测试等)自动覆盖,不必逐个目录追加
+[Bb]in/
+[Oo]bj/
+
+# 用户级文件(Visual Studio 的 .user / .suo 等)
+*.user
+*.suo
+
 # Inno Setup 安装包产物(Setup\installer.iss 的 OutputDir)
 /Setup/*.exe

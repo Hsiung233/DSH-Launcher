@@ -1,0 +1,54 @@
+# 编辑器与代码风格基线。风格规则全部是 suggestion(不参与编译失败),
+# 只有 Directory.Build.props 里提升为错误的可空性警告会影响构建 ——
+# 目的是让新代码自动向现有风格靠拢,而不是把历史代码一次性重排。
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# 只有这些文件用 4 空格缩进之外的宽度
+[*.{json,yml,yaml}]
+indent_size = 2
+
+# Markdown 的行尾空格有意义(强制换行),不要裁
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+# 与现有代码一致:System.* 的 using 排在最前,其余按字母序
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+# 字段/属性/方法一律用 this. 限定(与全仓库写法一致,便于区分局部变量与成员)
+dotnet_style_qualification_for_field = true:suggestion
+dotnet_style_qualification_for_property = true:suggestion
+dotnet_style_qualification_for_method = true:suggestion
+dotnet_style_qualification_for_event = true:suggestion
+# using 外的修饰符顺序、readonly 提示等交给默认分析器,这里只固定几条明确的
+dotnet_style_readonly_field = true:suggestion
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:silent
+dotnet_style_prefer_conditional_expression_over_return = true:silent
+
+# 大括号:全部 Allman(与现有代码一致)
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+
+# 局部变量优先 var(现有代码大量使用 var)
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# 空行与空格
+csharp_preserve_single_line_statements = false
+csharp_preserve_single_line_blocks = true
+dotnet_diagnostic.IDE0005.severity = suggestion

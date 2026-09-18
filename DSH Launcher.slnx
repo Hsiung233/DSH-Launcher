@@ -1,3 +1,13 @@
 <Solution>
   <Project Path="DSH Launcher/DSH Launcher.csproj" />
+
+  <!-- ⚠ 测试项目 DSH Launcher.Tests 有意**不列在这里**:
+       本机 .NET SDK(10.0.401)的 Sdks 目录缺少
+       Microsoft.NET.SDK.WorkloadAutoImportPropsLocator / WorkloadManifestTargetsLocator,
+       导致**任何双项目解决方案**在 solution 级构建/还原时都以 MSB4276 失败
+       (单个项目正常,项目级命令正常)。这是 SDK 安装本身的问题,与本仓库无关 ——
+       修复 SDK 后把下面这行取消注释即可,VS 里也能正常加载:
+       <Project Path="DSH Launcher.Tests/DSH Launcher.Tests.csproj" />
+       在此之前,测试用项目级命令跑:
+         dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj" -->
 </Solution>

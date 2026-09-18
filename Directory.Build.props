@@ -1,0 +1,24 @@
+<Project>
+
+  <!-- 全仓库共用的编译设置。单项目时这些值看着多余,集中在这里是为了:
+       ① 新增项目(如测试项目)自动继承同一套语言/分析器设置,不会各写一份;
+       ② 需要收紧规则(比如把空引用警告提升为错误)时只改一处。 -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <!-- 不使用隐式 using:本项目所有 using 都显式写出,便于看清每个文件的依赖 -->
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- 分析器:默认级别 + 让 .editorconfig 里的代码风格规则参与编译 -->
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- 可空性问题(本仓库已开启 Nullable)是实打实的缺陷来源,提升为错误;
+         其余警告保持警告,避免把编译变成"历史包袱一次性清算" -->
+    <WarningsAsErrors>nullable</WarningsAsErrors>
+
+    <!-- 可复现构建:相同输入产生相同产物,便于对比 CI 与本地 -->
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+</Project>
