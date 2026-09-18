@@ -82,18 +82,22 @@ public partial class App : Application
                 return;
             }
 
-            // 安装器进程链逃逸(2026-09-18 端到端实验定位):通过安装器"安装完成后启动"拉起的实例,
+            // 上游进程链逃逸(2026-09-18 端到端实验定位):凡是被别的进程当子进程拉起的实例
+            // (安装器的"安装完成后启动"是典型来源,第三方/企业部署工具、将来可能的自动更新器同理),
             // 无论环境变量怎么清理、cwd/令牌如何,dsh 服务启动必败(整片 Cannot find package),
-            // 而同一 exe 手动启动必成 —— Windows 加载器对"安装器进程链"的标记是链级继承的,
+            // 而同一 exe 手动启动必成 —— Windows 在加载器层随**进程链**继承的 AppCompat shim 才是元凶,
             // 清环境变量拦不住。唯一可靠解法:由 explorer.exe(干净链根)重新拉起自己,自己退出。
+            // ⚠ 定位:**独立于安装器的通用自愈**,不是 installer.iss 那条 [Run] 的补丁。
+            //   installer.iss 改走 explorer 修的是"正常路径不再产生这种链",本条管的是"任何链都能自愈" ——
+            //   不要因为安装器修好了就判定它是死代码而删除(别的部署方式照样会把本程序放进自己的进程链)。
             // 探测后旧实例先释放互斥体再退出,避免新实例走"通知已有实例"路径被误退。
             // 循环护栏:逃逸前写标记文件;若本实例是刚被逃逸拉起的(标记还在),不再逃逸 ——
             // 覆盖 __COMPAT_LAYER 被持久化的极端情况(否则 explorer 拉起的新实例照样非空 → 无限重启)。
-            if (IsInsideInstallerCompatChain())
+            if (IsInsideInheritedCompatChain())
             {
                 if (!ConsumeEscapeMarker())
                 {
-                    if (TryEscapeInstallerChain())
+                    if (TryEscapeInheritedChain())
                     {
                         Environment.Exit(0);
                         return;
@@ -104,7 +108,7 @@ public partial class App : Application
             else
             {
                 // 本次是干净链:上一次逃逸留下的标记已经无意义,顺手清掉 ——
-                // 否则它会让 2 分钟内"下一次安装器启动"误判为"我就是逃逸拉起的"而跳过逃逸,直接回到必败状态
+                // 否则它会让 2 分钟内"下一次带链启动"误判为"我就是逃逸拉起的"而跳过逃逸,直接回到必败状态
                 TryDeleteEscapeMarker();
             }
 
@@ -118,8 +122,8 @@ public partial class App : Application
             AppLogService.Write(ChildEnvironment.DescribeInheritedVariables());
 
             // 提权信息已由上面那行 app.log(DescribeInheritedVariables)留证,不再往面板里提示:
-            // 实测提权与兼容层变量本身都不是 dsh 失败的原因(真因是安装器进程链的链级兼容层标记;
-            // 正解见本文件顶部的“安装器进程链逃逸”逻辑)。
+            // 实测提权与兼容层变量本身都不是 dsh 失败的原因(真因是上游进程链的链级兼容层标记;
+            // 正解见本文件顶部的“上游进程链逃逸”逻辑)。
 
             // DSH 服务启动并检测到 Web 地址后,按“启动DSH服务后”设置自动打开
             DshService.Instance.WebUrlDetected += OnDshWebUrlDetected;
@@ -361,16 +365,21 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 当前进程是否处于"安装器进程链"里(以 __COMPAT_LAYER 非空为信号)。
+    /// 当前进程是否处于“上游进程链”里(以 __COMPAT_LAYER 非空为信号),即被别的进程当作子进程拉起。
     /// <para>
-    /// 判定依据(2026-09-18 端到端实验):安装器"安装完成后启动"拉起的实例,环境里必有非空
+    /// 判定依据(2026-09-18 端到端实验):安装器“安装完成后启动”拉起的实例,环境里必有非空
     /// <c>__COMPAT_LAYER</c>(实测见过 <c>DetectorsAppHealth</c>/<c>ElevateCreateProcess</c> 两种,
-    /// 随安装器被哪个进程拉起而异),而手动启动永远为空;此类实例的 dsh 服务启动必败(链级标记,
-    /// 清环境变量无效),所以一律经 explorer.exe 逃逸重启。普通用户不会手动给本程序设
+    /// 随上游进程本身被哪个进程拉起而异),而手动/explorer 启动永远为空;此类实例的 dsh 服务启动必败
+    /// (链级标记,清环境变量无效),所以一律经 explorer.exe 逃逸重启。普通用户不会手动给本程序设
     /// <c>__COMPAT_LAYER</c>(右键兼容性设置写入的是 HKCU\...\AppCompatFlags\Layers,不走环境变量)。
     /// </para>
+    /// <para>
+    /// ⚠ 判定条件**只看“非空”,不要按值收窄**(不能只认 <c>ElevateCreateProcess</c> 之类):
+    /// 实测链上的值随上游进程变化,按值匹配会把已修复的场景重新放进坑里。误判(如被写成持久环境变量)
+    /// 的代价只是“多重启一次”,已由 <see cref="ConsumeEscapeMarker"/> 的护栏与提示兑付。
+    /// </para>
     /// </summary>
-    private static bool IsInsideInstallerCompatChain()
+    private static bool IsInsideInheritedCompatChain()
     {
         try
         {
@@ -383,7 +392,7 @@ public partial class App : Application
         }
     }
 
-    /// <summary>逃逸标记文件路径(与 app.log 同目录)。</summary>
+    /// <summary>逃逸标记文件路径(与 app.log 同目录)。文件名沿用历史命名,作为稳定标识保持不改。</summary>
     private static string EscapeMarkerPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "DSH Launcher", "Settings", "installer-escape.marker");
@@ -410,7 +419,7 @@ public partial class App : Application
             File.Delete(path);
             if (age <= TimeSpan.FromMinutes(2))
             {
-                AppLogService.Write("[启动] 本实例是刚由安装器链逃逸拉起的(逃逸标记有效),不再二次逃逸,直接继续运行。");
+                AppLogService.Write("[启动] 本实例是刚由进程链逃逸拉起的(逃逸标记有效),不再二次逃逸,直接继续运行。");
 
                 // 护栏触发说明:逃逸过一次却仍带着链级标记 ⇒ __COMPAT_LAYER 很可能是**持久**环境变量,
                 // 此时 explorer 拉起的新实例同样被套层、dsh 仍会失败。只在这里往面板说一句,
@@ -433,18 +442,24 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 由 explorer.exe 重新拉起自己以逃逸安装器进程链。
+    /// 由 explorer.exe 重新拉起自己以逃逸上游进程链(任何把本程序当子进程拉起的父进程)。
     /// <para>
     /// 返回 true 表示逃逸重启已发起(调用方应退出);false 表示失败(调用方应继续运行,保底旧行为)。
     /// 必须先释放单实例互斥体再拉起:explorer 创建新进程需要时间,若旧实例仍持有互斥体,
     /// 新实例会走"检测到已有实例"路径被误退。explorer 自己是干净的加载器链根,
-    /// 由它创建的新实例不继承任何安装器链标记,环境也换成用户会话环境(无兼容层变量)。
+    /// 由它创建的新实例不继承任何链标记,环境也换成用户会话环境(无兼容层变量)。
+    /// </para>
+    /// <para>
+    /// 已知取舍(有意为之,不要当 bug 修):重启**不带命令行参数**,explorer 只把第一个参数当“要打开的对象”。
+    /// 目前应用不解析参数(<c>Program.cs</c> 仅把 args 转交给 Avalonia 生命周期),所以无实际影响;
+    /// 若将来需要靠参数驱动启动行为,必须同步改这里(例如改为经临时快捷方式/自己拼 ShellExecuteEx 传递)。
+    /// 工作目录会变成 exe 所在目录 —— 与“手动双击启动”一致,比继承上游 cwd 更可预测。
     /// </para>
     /// </summary>
-    private bool TryEscapeInstallerChain()
+    private bool TryEscapeInheritedChain()
     {
         var exe = Environment.ProcessPath;
-        AppLogService.Write("[启动] 检测到安装器进程链(__COMPAT_LAYER 非空):将由 explorer.exe 以干净环境重新拉起本程序并退出当前实例。");
+        AppLogService.Write("[启动] 检测到上游进程链带来的兼容层标记(__COMPAT_LAYER 非空):将由 explorer.exe 以干净环境重新拉起本程序并退出当前实例。");
 
         // 先释放互斥体,新实例才能正常取得单实例所有权
         try
@@ -480,7 +495,7 @@ public partial class App : Application
             File.WriteAllText(EscapeMarkerPath, DateTime.UtcNow.ToString("O"));
 
             // explorer.exe 会把参数当作要打开的对象,对 exe 即是"启动该程序",
-            // 新进程的父进程是 explorer(不在安装器链里)。
+            // 新进程的父进程是 explorer(不在上游进程链里)。
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{exe}\"") { UseShellExecute = true });
             return true;
         }
@@ -538,7 +553,7 @@ public partial class App : Application
     /// <summary>
     /// 在"已有实例正在退出"的短暂窗口里再争取一次单实例所有权。
     /// <para>
-    /// 为什么需要:安装器链逃逸时旧实例要先 <c>ReleaseMutex</c> 再让 explorer 拉起新实例,
+    /// 为什么需要:进程链逃逸时旧实例要先 <c>ReleaseMutex</c> 再让 explorer 拉起新实例,
     /// 两个动作之间有几百毫秒;若这期间有别的实例抢先拿到互斥体,逃逸出来的实例会走
     /// "通知已有实例并退出"这条路 —— 用户看到的就是"点了没反应"。
     /// 命中被遗弃的互斥体(<c>AbandonedMutexException</c>)算作"已获得",等于接管它。

@@ -70,13 +70,16 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; ⚠ 不要改回默认写法(Setup 直接 CreateProcess 拉起应用):安装器进程链上的**链级兼容层标记**会被继承到
-; 应用及其子进程,导致 dsh 解析不到 profile 依赖(整片 "Cannot find package '@deepseek-ai/*'")、
+; ⚠ 不要改回默认写法(Setup 直接 CreateProcess 拉起应用):安装器把应用当子进程拉起时,安装器进程链上的
+; **链级兼容层标记**会被继承到应用及其子进程,导致 dsh 解析不到 profile 依赖(整片 "Cannot find package '@deepseek-ai/*'")、
 ; 退出码 1 —— 这就是"安装完成后首次运行 dsh 必败、手动启动就好"的根因(2026-09-18 端到端实验闭环)。
 ; 改为经 explorer 启动:命令由**已在运行的 Explorer** 接管创建进程,父进程是 explorer、链根干净。
-; 这与应用自身那条"安装器链逃逸"用的是同一机制,已实测新实例 __COMPAT_LAYER 为空、EFC_* 为 0。
+; 这与应用自身那条"进程链逃逸"用的是同一机制,已实测新实例 __COMPAT_LAYER 为空、EFC_* 为 0。
 ; 注意:这里**不要**换成 shellexec —— ShellExecuteEx 通常在 Setup 进程内创建子进程(父进程仍是 Setup),
-; 断不了链;而应用中保留了逃逸逻辑作为兜底(如"以管理员身份运行 Setup"等场景)。
+; 断不了链;而应用侧另有一条**独立于本安装器**的通用自愈(见 App.axaml.cs 的 IsInsideInheritedCompatChain):
+; 只要它发现自己带着链级兼容层标记,就自己经 explorer 逃逸重开。
+; 所以本条修的是"正常路径不再需要自愈",而不是"可以删掉应用侧的自愈" —— 别的部署方式
+; (企业推送、包装脚本、将来的自动更新器)照样会把应用放进自己的进程链。
 ; ⚠ 路径必须用 {win}(= C:\Windows\explorer.exe):explorer.exe **不在 System32 下**,写 {sys} 会在运行时找不到文件。
 Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 

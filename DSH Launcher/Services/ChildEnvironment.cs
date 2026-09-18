@@ -182,7 +182,11 @@ namespace DSH_Launcher.Services
         /// 大面积不可达(<c>Cannot find package</c>),而环境变量只是它的影子。
         /// ⚠ 所以“清子进程环境变量”无效,该清理已删除。
         /// </para>
-        /// <para>现在它只用于两件事:启动时写 app.log 留证,以及作为 App.axaml.cs 里“逃逸安装器链”的触发信号。</para>
+        /// <para>
+        /// 现在它只用于两件事:启动时写 app.log 留证,以及作为 App.axaml.cs 里“逃逸上游进程链”的触发信号。
+        /// 注意后者是**通用**的(不限安装器):任何把本程序当子进程拉起、且带链级兼容层标记的父进程
+        /// (安装器、部署工具、包装脚本、将来的自动更新器)都会命中。
+        /// </para>
         /// </summary>
         public const string CompatibilityLayerVariable = "__COMPAT_LAYER";
 
@@ -192,7 +196,7 @@ namespace DSH_Launcher.Services
         /// <summary>
         /// 当前进程是否以管理员权限运行(非 Windows 恒为 false),仅用于启动时写 app.log 留证。
         /// <para>
-        /// ⚠ 提权**不是**"安装器启动时 dsh 起不来"的原因(已实测排除);真因是安装器进程链的
+        /// ⚠ 提权**不是**"安装器启动时 dsh 起不来"的原因(已实测排除);真因是上游进程链的
         /// 链级兼容层标记,见 <see cref="CompatibilityLayerVariable"/> 与 App.axaml.cs 的逃逸逻辑。
         /// </para>
         /// </summary>
@@ -215,7 +219,7 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 当前进程环境里是否有"安装器/提权残留"变量(诊断用,启动时写入 app.log)。
+        /// 当前进程环境里是否有"上游进程链/提权残留"变量(诊断用,启动时写入 app.log)。
         /// 判断依据:是否提权、<c>__COMPAT_LAYER</c> 的值、<c>EFC_*</c> 的个数。
         /// </summary>
         public static string DescribeInheritedVariables()
@@ -229,7 +233,7 @@ namespace DSH_Launcher.Services
 
             return $"环境:{(IsElevated() ? "管理员权限" : "普通权限")};"
                 + $"{CompatibilityLayerVariable}{layerText};{efc} 个 EFC_* 变量"
-                + (string.IsNullOrEmpty(layer) ? string.Empty : "(链级兼容层:启动时会逃逸出安装器链重开自己)");
+                + (string.IsNullOrEmpty(layer) ? string.Empty : "(链级兼容层:启动时会逃逸出上游进程链重开自己)");
         }
 
         /// <summary>
