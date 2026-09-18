@@ -16,7 +16,7 @@ namespace DSH_Launcher.Services
     ///
     /// 作用范围(有意为之):
     /// <list type="bullet">
-    /// <item>走 <see cref="DshService.StartHidden"/> 的全部子进程 —— npm 的
+    /// <item>走 <see cref="ChildProcessRunner"/> 的全部子进程 —— npm 的
     /// <c>ls/view/install</c>、<c>where dsh</c> 探测、<c>dsh plugin ...</c>(pnpm 安装/卸载)。</item>
     /// <item><see cref="PluginService"/> 拉取插件目录用的 HTTP 客户端。</item>
     /// <item>**不包括** <c>dsh web</c> 服务进程:它是本机服务,注入代理反而会让
@@ -255,12 +255,19 @@ namespace DSH_Launcher.Services
                 BypassProxyOnLocal = true,
             };
 
+            // 条目既支持精确主机名也支持域名后缀(localhost / .corp.com),统一按“后缀匹配”处理:
+            // .NET 的 BypassList 是正则表,主机名要转义,只匹配整个主机(含子域)以免误伤同前缀域名。
+            // 先收集再一次性赋值:逐条读回 BypassList 再加一条是 O(n²) 的数组复制,也容易被误读成“覆盖”。
+            var bypass = new List<string>();
             foreach (var entry in NormalizeNoProxy(SettingsService.Instance.Settings.NoProxy)
                 .Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
-                // 条目既支持精确主机名也支持域名后缀(localhost / .corp.com),统一按“后缀匹配”处理:
-                // .NET 的 BypassList 是正则表,主机名要转义,只匹配整个主机(含子域)以免误伤同前缀域名
-                webProxy.BypassList = [.. (webProxy.BypassList ?? []), $@"(^|\.){Regex.Escape(entry.TrimStart('*', '.'))}$"];
+                bypass.Add($@"(^|\.){Regex.Escape(entry.TrimStart('*', '.'))}$");
+            }
+
+            if (bypass.Count > 0)
+            {
+                webProxy.BypassList = [.. bypass];
             }
 
             handler.Proxy = webProxy;

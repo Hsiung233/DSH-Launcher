@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 只测**不依赖界面的纯逻辑**:版本比较、日志裁剪、补丁文件读写、目录解析、编码判定……
+       这些正是注释里写满"实测踩过的坑"的地方,也最容易在重构中被静默改坏。
+       Nullable / LangVersion / 分析器设置继承仓库根的 Directory.Build.props。
+
+       测试框架用 MSTest 而不是 xunit:当前开发机访问不到 nuget.org,只有随 Visual Studio
+       安装的离线包源里有可用的测试包(mstest 3.1.1 + Microsoft.NET.Test.Sdk 17.10);
+       等能联网后把 Test.Sdk 换成最新稳定版即可,测试代码本身与框架无关的部分不受影响。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>DSH_Launcher.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0-preview-24080-01" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.1.1" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.1.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DSH Launcher\DSH Launcher.csproj" />
+  </ItemGroup>
+
+</Project>

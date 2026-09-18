@@ -49,12 +49,17 @@ WebView 做了两项体验优化：
 - 关闭主窗口默认最小化到托盘（可配置为直接退出）。
 - 托盘右键菜单可控制服务启停与退出程序。
 
+### 重复启动
+启动器是单实例常驻程序：再次启动（例如又点了一次桌面快捷方式）不会开出第二个实例，
+而是通知已在运行的实例按设置页的「重复启动应用时」响应 —— 无动作 / 打开主界面 / 打开 WebView / 打开浏览器。
+选后两项但 dsh 服务未运行（拿不到 Web 地址）时，改为打开主界面；默认打开主界面。
+
 ### 设置
 WinUI 卡片式设置页，分四组：
 
 | 卡片 | 设置项 |
 |---|---|
-| **服务** | 启动时自动运行服务、服务就绪后的动作、关闭主窗口时隐藏到托盘、监听端口 |
+| **服务** | 启动时自动运行服务、服务就绪后的动作、重复启动时的动作、关闭主窗口时隐藏到托盘、监听端口 |
 | **系统托盘** | 单击动作、双击动作 |
 | **WebView** | 应用内链接打开方式（系统浏览器 / 应用内）、关闭时保留窗口、保留超时（分钟） |
 | **环境** | npm 源（使用配置源 / 官方 / npmmirror / 腾讯云 / 华为云）、HTTP 代理、不走代理的地址 |
@@ -82,6 +87,16 @@ WinUI 卡片式设置页，分四组：
 
 架构上刻意保持简单：**无 DI 容器、无 MVVM 框架**，UI 采用 code-behind + `x:Name`，业务逻辑集中在 `Services/` 下的单例服务中。服务事件在后台线程触发，UI 侧统一通过 `Dispatcher.UIThread.Post` 回到 UI 线程。
 
+几处刻意划出的边界：
+
+- **子进程只有一个出口**（`ChildProcessRunner`）：定位命令、注入 npm 源/代理、按行判定编码（Node 写 UTF-8、`cmd.exe` 自身消息是 OEM 代码页）、等待输出读完，全部收在这里；dsh 命令的定位与执行单独放在 `DshCli`，插件页因此不必依赖整个 `DshService`。
+- **跨页面的 UI 状态没有重复实现**：日志限长（`LogBuffer`）、刷新节流（`LogAppendThrottle`）、复制反馈（`CopyFeedback`）、卡片外观与代码区底色（`App.axaml`）都是单一定义。
+- **最微妙的两块各自独立成文件**：`SingleInstanceGuard`（互斥体 + 命名管道）与 `CompatChainEscape`（上游进程链逃逸，附完整成因说明）——它们都是"改错了很难查"的逻辑，不该混在窗口/托盘代码里。
+- **纯逻辑与界面分离到可测**：插件目录的加载状态机（缓存命中/同地址去重/世代号防"慢的旧来源覆盖新来源"）是 `CatalogLoadController`，启动失败诊断是 `StartFailureDiagnostics`，两者都不依赖界面。
+- **状态挂数据对象、不挂控件**：列表是虚拟化的（容器会回收复用），所以"勾选""待确认卸载"这类状态存在 `PluginEntry` 上，而不是写在 `Button.Content` 里。
+- **命名空间与文件夹一致**：`Services/Plugins/*` → `DSH_Launcher.Services.Plugins`，`Views/Shared/*` → `DSH_Launcher.Views.Shared`。
+- **纯逻辑有单元测试兜底**（`DSH Launcher.Tests`，见下文）：版本比较、日志裁剪、`cordis.patch.yml` 读写、两份插件目录的解析、`--dump-config` 解析、目录加载时序、编码判定、设置 JSON 的宽容枚举解析等。
+
 ---
 
 ## 构建与运行
@@ -97,6 +112,26 @@ dotnet run --project "DSH Launcher/DSH Launcher.csproj"
 > 构建前建议先结束正在运行的实例（`Stop-Process -Name "DSH Launcher"`），否则输出程序集可能被占用。
 
 发行版另附 `Properties/PublishProfiles/DSH Launcher_Windows_x64.pubxml` 发布配置。
+
+### 运行测试
+
+```powershell
+dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj"
+```
+
+测试项目覆盖的是**不依赖界面的纯逻辑**：版本比较、日志限长与裁剪、`cordis.patch.yml` 托管区块读写、两份社区目录的解析与筛选排序、**目录加载的并发时序**（慢的旧来源不得覆盖新来源、缓存命中要顶掉在飞请求）、`dsh --dump-config` 输出解析、子进程输出编码判定、设置 JSON 与宽容枚举解析、插件条目的界面状态、启动失败提示。这些都是注释里写满"实测踩过的坑"的地方，也正是重构中最容易被静默改坏的地方。
+
+> 若本机访问不到 nuget.org，测试包（MSTest）可从 Visual Studio 自带的离线包源还原：
+> ```powershell
+> dotnet restore "DSH Launcher.Tests/DSH Launcher.Tests.csproj" --source "C:\Program Files (x86)\Microsoft SDKs\NuGetPackages"
+> ```
+
+> **构建排错**：Avalonia 的构建期遥测任务会往 `%LOCALAPPDATA%\AvaloniaUI` 写日志，写不进去会让构建以 `MSB4018` 直接失败。
+> 用 `-p:UsedAvaloniaProducts=` 可跳过该任务（CI 上也这么用）。
+> 另外，若 .NET SDK 安装不完整（`sdk\<版本>\Sdks` 下缺 `Microsoft.NET.SDK.WorkloadAutoImportPropsLocator`
+> 等 workload 定位 SDK），**任何多项目解决方案**在 solution 级构建/还原时都会以 `MSB4276` 失败（单项目与项目级命令正常）——
+> 这是 SDK 安装问题，修复后即可把 `DSH Launcher.Tests` 加回 `DSH Launcher.slnx`（slnx 里有对应说明）。
+
 
 ### 打包安装包（Inno Setup）
 
@@ -140,7 +175,10 @@ dotnet publish "DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launche
 ## 目录结构
 
 ```
-DSH Launcher.slnx                 解决方案（.slnx 格式）
+DSH Launcher.slnx                 解决方案（.slnx 格式；测试项目暂未列入，原因见文件内说明）
+global.json                       .NET SDK 版本（CI 与本地一致）
+Directory.Build.props             全仓库共用的编译设置（语言版本、可空性、分析器、可复现构建）
+.editorconfig                     代码风格基线
 DSH Launcher/
   App.axaml(.cs)                  应用入口：主题、托盘、单实例、退出清理
   Program.cs                      程序入口
@@ -151,24 +189,55 @@ DSH Launcher/
     HomePageControl.axaml(.cs)    首页：状态、启停、端口、日志、环境信息
     PluginsPageControl.axaml(.cs) 插件页：已安装 / 安装新插件
     SettingsPageControl.axaml(.cs)设置页：服务 / 托盘 / WebView / 环境
-  Services/                       业务服务（均为单例）
+    Shared/                       页面共用的小件
+      LogAppendThrottle.cs        日志面板刷新节流（整段重排的代价见文件内说明）
+      CopyFeedback.cs             「复制 → 已复制」反馈
+      CatalogLoadController.cs    插件目录加载状态机（缓存/去重/世代号，被单元测试覆盖）
+  Services/                       业务服务（单例为主）
     DshService.cs                 核心：安装、启停、日志、版本检查、环境探测
     DshService.JobObject.cs       Windows Job Object，保证子进程随主进程退出
+    DshService.Diagnostics.cs     启动失败诊断的接线（规则表见 StartFailureDiagnostics）
+    StartFailureDiagnostics.cs    失败输出 → 可操作提示 → 依赖层快照留证
+    ChildProcessRunner.cs         子进程执行的唯一出口（环境注入 + 逐行编码判定 + 等待输出读完）
+    DshCli.cs                     dsh 命令定位与子命令执行（插件页不再依赖整个 DshService）
+    SingleInstanceGuard.cs        单实例：互斥体 + 命名管道
+    CompatChainEscape.cs          上游进程链逃逸（附完整成因与"不要删"的理由）
     PluginService.cs              插件清单读写、启停覆盖、目录拉取、安装卸载
+    Plugins/
+      PluginPatchFile.cs          cordis.patch.yml 托管区块的读写（格式知识集中在此）
+      PluginCatalogReader.cs      两份社区目录 JSON 的解析归一
     SettingsService.cs            设置模型与 JSON 持久化（含宽容枚举解析）
     ChildEnvironment.cs           npm 源 / 代理注入子进程与 HttpClient
     PlatformProcess.cs            跨平台进程启动、命令定位、路径与输出解码
-    WebOpener.cs                  WebView 窗口管理、浏览器打开、引擎探测
+    WebOpener.cs                  WebView 窗口管理、引擎探测（窗口复用/空闲释放）
+    BrowserLauncher.cs            用系统默认浏览器打开地址（与 WebView 无关，故独立）
     WindowStateService.cs         窗口位置/尺寸/最大化状态记忆
     TrayService.cs                系统托盘图标与交互
+    LogBuffer.cs                  有上限的日志缓冲区（防面板假死）
     AppLogService.cs              应用日志文件
+    AppIcon.cs                    嵌入图标资源的加载
   Properties/PublishProfiles/     dotnet publish 发布配置（DSH Launcher_Windows_x64）
+DSH Launcher.Tests/               单元测试（MSTest，覆盖上表中的纯逻辑）
+  LogBufferTests.cs               日志限长与裁剪
+  VersionComparisonTests.cs       版本比较
+  PluginPatchFileTests.cs         cordis.patch.yml 托管区块读写
+  PluginCatalogReaderTests.cs     两份社区目录解析
+  PluginCatalogFilterTests.cs     目录筛选与排序
+  CompositionDumpTests.cs         --dump-config 解析 + 规格归一化
+  EnvironmentAndEncodingTests.cs  代理/不走代理归一化 + 输出编码判定
+  SettingsJsonTests.cs            设置 JSON 与宽容枚举解析
+  RepeatLaunchOptionsTests.cs     “重复启动应用时”的选项顺序与枚举值互转
+  FailureAnalysisTests.cs         启动失败提示
+  CatalogLoadControllerTests.cs   目录加载时序（慢的旧来源/缓存命中顶掉在飞请求）
+  PluginEntryTests.cs             插件条目的界面状态（勾选、待确认卸载）
 
 Publish-App.ps1                   发布到 bin/Publish 的脚本（清空旧产物、结束运行中的实例）
 Build-Installer.ps1               先调 Publish-App.ps1 发布，再用 Inno Setup 编译安装包
 Setup/
   installer.iss                   Inno Setup 安装包脚本
 docs/screenshots/                 README 中使用的界面截图
+.github/workflows/build.yml       CI：Release 构建 + 跑测试
+.github/skills/                   仓库自带的界面验证 skill（UI Automation，见 SKILL.md）
 ```
 
 ---

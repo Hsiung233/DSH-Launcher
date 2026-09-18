@@ -19,7 +19,6 @@ namespace DSH_Launcher.Services
         public static DshService Instance { get; } = new();
 
         private const string PackageName = "@deepseek-ai/dsh";
-        private const string CommandName = "dsh";
 
         /// <summary>固定的子命令部分;监听地址与端口由 <see cref="BuildRunArgs"/> 按设置追加。</summary>
         private const string BaseRunArgs = "web --no-open";
@@ -267,8 +266,8 @@ namespace DSH_Launcher.Services
         {
             try
             {
-                var (stdout, _) = await RunCaptureAsync($"npm ls -g {PackageName} --depth=0");
-                var match = Regex.Match(stdout, Regex.Escape(PackageName) + @"@([^\s]+)");
+                var result = await ChildProcessRunner.CaptureAsync($"npm ls -g {PackageName} --depth=0");
+                var match = Regex.Match(result.Stdout, Regex.Escape(PackageName) + @"@([^\s]+)");
                 this.InstalledVersion = match.Success ? match.Groups[1].Value : null;
             }
             catch (Exception ex)
@@ -316,9 +315,9 @@ namespace DSH_Launcher.Services
 
             try
             {
-                var (stdout, _) = await RunCaptureAsync($"npm view {PackageName} version");
+                var result = await ChildProcessRunner.CaptureAsync($"npm view {PackageName} version");
                 // 输出形如 "1.2.3";多行时取最后一个非空行(npm 可能先打印告警)
-                var latest = stdout
+                var latest = result.Stdout
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries)
                     .Select(line => line.Trim())
                     .LastOrDefault(line => line.Length > 0);
@@ -357,7 +356,8 @@ namespace DSH_Launcher.Services
         /// 只比较数字部分(缺失的段按 0 处理);数字相同时,带预发布标记的视为更早
         /// (如 1.0.0-beta &lt; 1.0.0)。
         /// </summary>
-        private static int CompareVersions(string a, string b)
+        /// <remarks>internal 而非 private:这条规则被单元测试覆盖(见 DSH Launcher.Tests)。</remarks>
+        internal static int CompareVersions(string a, string b)
         {
             static (int[] Numbers, string Prerelease) Split(string value)
             {
@@ -435,7 +435,7 @@ namespace DSH_Launcher.Services
                         $"[启动] profile 依赖解析失败(第 {attempt} 次尝试),{TransientRetryDelay.TotalSeconds:0} 秒后重试…");
 
                     // 必须在失败当刻拍快照:重跑会改变各层依赖状态,事后再拍就不是失败现场了
-                    await this.CaptureResolutionDiagnosticsAsync(this.LastStartError);
+                    await CaptureResolutionDiagnosticsAsync(this.LastStartError);
                     await Task.Delay(TransientRetryDelay);
                 }
             }
@@ -461,25 +461,25 @@ namespace DSH_Launcher.Services
             this.ClearLog();
             this._lastStartLogMark = 0;
             this._lastRunArgs = BuildRunArgs();
-            this.AppendLog($"> {CommandName} {this._lastRunArgs}\r\n");
+            this.AppendLog($"> {DshCli.CommandName} {this._lastRunArgs}\r\n");
             // 1) 先定位 npm 全局 bin 下的 shim,给出明确错误,避免“进程活着但命令没跑起来”的模糊状态
             string shimPath;
             try
             {
-                var (found, probeOutput) = await FindDshShimAsync();
+                var (found, probeOutput) = await DshCli.FindAsync();
                 shimPath = found;
                 if (shimPath.Length == 0)
                 {
-                    this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n未找到“{CommandName}”命令。"
+                    this.LastStartError = $"命令: {DshCli.CommandName} {this._lastRunArgs}\r\n\r\n未找到“{DshCli.CommandName}”命令。"
                         + "npm 全局 bin 目录可能不在 PATH 中,或包未正确安装。"
-                        + $"\r\n\r\n{PlatformProcess.LocateCommandLine(CommandName)} 输出:\r\n{probeOutput}";
+                        + $"\r\n\r\n{PlatformProcess.LocateCommandLine(DshCli.CommandName)} 输出:\r\n{probeOutput}";
                     this.AppendLog("[启动失败] 未找到 dsh 命令\r\n");
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n定位命令失败:\r\n{ex}";
+                this.LastStartError = $"命令: {DshCli.CommandName} {this._lastRunArgs}\r\n\r\n定位命令失败:\r\n{ex}";
                 this.AppendLog($"[启动失败] 定位命令失败: {ex.Message}\r\n");
                 return false;
             }
@@ -530,7 +530,7 @@ namespace DSH_Launcher.Services
             }
             catch (Exception ex)
             {
-                this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n\r\n无法启动进程:\r\n{ex}";
+                this.LastStartError = $"命令: {DshCli.CommandName} {this._lastRunArgs}\r\n\r\n无法启动进程:\r\n{ex}";
                 this.AppendLog($"[启动失败] {ex.Message}\r\n");
 
                 // 进程压根没起来时(process.Start() 抛异常),_process 里留着的是一个"从未启动"的
@@ -604,7 +604,7 @@ namespace DSH_Launcher.Services
                         // 不在这里拍快照就永远没有失败当刻的四层状态了)
                         if (IsProfileResolutionFailure(this.LastStartError))
                         {
-                            _ = this.CaptureResolutionDiagnosticsAsync(this.LastStartError);
+                            _ = CaptureResolutionDiagnosticsAsync(this.LastStartError);
                         }
 
                         StartFailed?.Invoke();
@@ -642,12 +642,12 @@ namespace DSH_Launcher.Services
             }
 
             var hints = AnalyzeFailureOutput(output);
-            this.LastStartError = $"命令: {CommandName} {this._lastRunArgs}\r\n退出代码: {exitCode}\r\n\r\n可能的原因:\r\n{ProfileResolutionHintFor(output)}{hints}\r\n\r\n完整输出:\r\n{output}";
+            this.LastStartError = $"命令: {DshCli.CommandName} {this._lastRunArgs}\r\n退出代码: {exitCode}\r\n\r\n可能的原因:\r\n{ProfileResolutionHintFor(output)}{hints}\r\n\r\n完整输出:\r\n{output}";
             this.AppendLog($"[启动失败,进程已退出,代码 {exitCode}]\r\n");
 
             // 面板正文有长度上限(只保留尾部),而排查时最有价值的往往是**开头**(第一处错误):
             // 这里把本次运行输出的开头写进 app.log —— 文件日志不受面板上限影响,事后可查。
-            AppLogService.Write($"[启动失败] {CommandName} {this._lastRunArgs} / 退出代码 {exitCode} / "
+            AppLogService.Write($"[启动失败] {DshCli.CommandName} {this._lastRunArgs} / 退出代码 {exitCode} / "
                 + $"缓冲区 {output.Length} 字符,本次运行输出共 {this.RunOutputLength} 字符,开头 {RunHeadChars} 字符如下:\r\n{this.RunHeadText()}");
             return true;
         }
@@ -762,125 +762,6 @@ namespace DSH_Launcher.Services
             WebOpener.CloseSession();
         }
 
-        private static async Task<(string Stdout, string Stderr)> RunCaptureAsync(string command)
-        {
-            using var process = StartHidden(command);
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return (await stdout, await stderr);
-        }
-
-        /// <summary>
-        /// 用定位到的 dsh shim 执行一条 dsh 子命令并捕获输出(供插件管理等场景复用;
-        /// 复用同一套 shim 定位逻辑,避免两处各自找命令而行为不一致)。
-        /// 返回码 -1 表示未能定位 dsh 命令(说明见 Stderr)。
-        /// </summary>
-        public async Task<(int ExitCode, string Stdout, string Stderr)> RunDshCaptureAsync(string arguments)
-        {
-            var (shimPath, locateError) = await TryLocateShimAsync();
-            if (shimPath.Length == 0)
-            {
-                return (-1, string.Empty, locateError);
-            }
-
-            // dsh(node)输出 UTF-8,但 cmd 自身的错误消息是 OEM 代码页 —— 按原样字节收下再逐行判定
-            using var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments), rawByteOutput: true);
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return (process.ExitCode,
-                PlatformProcess.DecodeChildOutputText(await stdout),
-                PlatformProcess.DecodeChildOutputText(await stderr));
-        }
-
-        /// <summary>
-        /// 用定位到的 dsh shim 执行一条 dsh 子命令,输出按行流式回传(用于需要实时反馈的操作,如安装/卸载插件)。
-        /// 返回码 -1 表示未能定位 dsh 命令。
-        /// </summary>
-        public async Task<int> RunDshStreamingAsync(string arguments, Action<string> onOutput)
-        {
-            var (shimPath, locateError) = await TryLocateShimAsync();
-            if (shimPath.Length == 0)
-            {
-                onOutput(locateError);
-                return -1;
-            }
-
-            var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            // dsh/pnpm(node)写 UTF-8,cmd 自身消息是 OEM 代码页 —— 原样收下再逐行判定
-            var process = StartHidden(PlatformProcess.ShellCommandForExecutable(shimPath, arguments), rawByteOutput: true);
-            process.EnableRaisingEvents = true;
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data is not null)
-                {
-                    onOutput(PlatformProcess.DecodeChildOutputLine(e.Data));
-                }
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data is not null)
-                {
-                    onOutput(PlatformProcess.DecodeChildOutputLine(e.Data));
-                }
-            };
-            process.Exited += (_, _) => exited.TrySetResult();
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await exited.Task;
-
-            // 无参 WaitForExit 会等待异步输出读取完毕,避免 pnpm 末尾输出被截断
-            await Task.Run(process.WaitForExit);
-            var exitCode = process.ExitCode;
-            process.Dispose();
-            return exitCode;
-        }
-
-        /// <summary>定位 dsh shim;失败时返回空串与可直接展示的错误说明。</summary>
-        private static async Task<(string ShimPath, string Error)> TryLocateShimAsync()
-        {
-            try
-            {
-                var (found, probeOutput) = await FindDshShimAsync();
-                return found.Length > 0
-                    ? (found, string.Empty)
-                    : (string.Empty, $"未找到“{CommandName}”命令。npm 全局 bin 目录可能不在 PATH 中,或包未正确安装。\r\n"
-                        + $"{PlatformProcess.LocateCommandLine(CommandName)} 输出:\r\n{probeOutput}");
-            }
-            catch (Exception ex)
-            {
-                return (string.Empty, $"定位 dsh 命令失败: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// 定位 npm 全局 bin 下的 dsh 命令。
-        /// Windows:where dsh → 取 .cmd/.exe(npm 装出来的是 dsh.cmd);
-        /// 类 Unix(macOS/Linux):command -v dsh → 取第一条(npm 装出来的是**无扩展名**的
-        /// 符号链接,例如 /usr/local/bin/dsh,按 .cmd/.exe 过滤只会得出“未找到”)。
-        /// 返回空串表示未找到,同时返回探测命令的原始输出以便在错误信息里展示。
-        /// </summary>
-        private static async Task<(string ShimPath, string ProbeOutput)> FindDshShimAsync()
-        {
-            var probeCommand = PlatformProcess.LocateCommandLine(CommandName);
-            var (probeOut, probeErr) = await RunCaptureAsync(probeCommand);
-
-            var candidates = probeOut
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Trim())
-                .Where(line => line.Length > 0);
-
-            var shimPath = PlatformProcess.IsWindows
-                ? candidates.FirstOrDefault(line => line.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
-                                                    || line.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) ?? string.Empty
-                : candidates.FirstOrDefault() ?? string.Empty;
-
-            return (shimPath, (probeOut + probeErr).TrimEnd());
-        }
-
         /// <summary>
         /// 查询用于排查启动问题的环境信息:Node / npm 版本、dsh 命令路径。
         /// 任一项查不到时返回 null(界面显示为未知),不抛异常。
@@ -893,7 +774,7 @@ namespace DSH_Launcher.Services
             string? dshPath = null;
             try
             {
-                var (shim, _) = await FindDshShimAsync();
+                var (shim, _) = await DshCli.FindAsync();
                 dshPath = shim.Length > 0 ? shim : null;
             }
             catch (Exception)
@@ -909,8 +790,8 @@ namespace DSH_Launcher.Services
         {
             try
             {
-                var (stdout, _) = await RunCaptureAsync(command);
-                return stdout
+                var result = await ChildProcessRunner.CaptureAsync(command);
+                return result.Stdout
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries)
                     .Select(line => line.Trim())
                     .FirstOrDefault(line => line.Length > 0);
@@ -921,60 +802,17 @@ namespace DSH_Launcher.Services
             }
         }
 
-        /// <summary>运行命令并把 stdout/stderr 流式追加到日志,进程退出后返回。</summary>
+        /// <summary>
+        /// 运行命令(如 <c>npm install -g</c>)并把 stdout/stderr 流式追加到日志,进程退出后返回。
+        /// 收尾的"等待异步输出读完"由 <see cref="ChildProcessRunner.StreamAsync"/> 负责 ——
+        /// 少了它,npm 末尾的输出会被截断。
+        /// </summary>
         private async Task RunStreamingAsync(string command)
         {
-            // npm install 流程(npm 输出不含 Web 地址);npm 是 Node 程序、写 UTF-8,
-            // 而 cmd 自身消息是 OEM 代码页 —— 原样收下再逐行判定
-            var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var process = StartHidden(command, rawByteOutput: true);
-            process.EnableRaisingEvents = true;
-            process.OutputDataReceived += (_, e) =>
-            {
-                if (e.Data is not null)
-                {
-                    this.AppendLog(PlatformProcess.DecodeChildOutputLine(e.Data) + "\r\n");
-                }
-            };
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data is not null)
-                {
-                    this.AppendLog(PlatformProcess.DecodeChildOutputLine(e.Data) + "\r\n");
-                }
-            };
-            process.Exited += (_, _) =>
-            {
-                this.AppendLog($"[npm 退出,代码 {process.ExitCode}]\r\n");
-                exited.SetResult();
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            await exited.Task;
-        }
-
-        /// <summary>
-        /// 静默执行一条命令行并捕获 stdout/stderr。
-        /// Windows 走 cmd.exe /c,类 Unix 走登录 shell -lc(见 <see cref="PlatformProcess"/>)。
-        /// <para>
-        /// 统一注入“环境设置”(npm 源 / 代理,见 <see cref="ChildEnvironment"/>)——
-        /// 这里是**所有非 dsh web 子进程**的公共出口(npm 安装/查询、命令探测、dsh 子命令),
-        /// 所以只需在这一处注入,不必在每个调用点重复。
-        /// <c>dsh web</c> 服务进程**不**走这里(它要连本机 127.0.0.1,不该被代理接管)。
-        /// </para>
-        /// </summary>
-        /// <param name="rawByteOutput">
-        /// 是否按“原样字节”收下输出,交给调用方用 <see cref="PlatformProcess.DecodeChildOutputLine"/> 判定编码。
-        /// 凡输出会被展示或解析的路径都要传 true(Node 写 UTF-8、cmd 自身消息是 OEM 代码页,两者会混在一起)。
-        /// </param>
-        private static Process StartHidden(string command, bool rawByteOutput = false)
-        {
-            var psi = PlatformProcess.CreateShellStartInfo(
-                command, redirectOutput: true, rawByteOutput: rawByteOutput);
-            ChildEnvironment.Apply(psi);
-            return Process.Start(psi)!;
+            // npm install 流程(npm 输出不含 Web 地址,故不做地址检测)
+            var exitCode = await ChildProcessRunner.StreamAsync(
+                command, line => this.AppendLog(line + "\r\n"));
+            this.AppendLog($"[npm 退出,代码 {exitCode}]\r\n");
         }
 
         [GeneratedRegex(@"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d+(?:/[^\s""'<>]*)?", RegexOptions.IgnoreCase | RegexOptions.Compiled, "zh-CN")]

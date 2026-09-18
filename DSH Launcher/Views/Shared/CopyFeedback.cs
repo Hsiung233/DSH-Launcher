@@ -4,7 +4,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 
-namespace DSH_Launcher.Views
+namespace DSH_Launcher.Views.Shared
 {
     /// <summary>
     /// "复制到剪贴板 + 按钮文字短暂变成「已复制」"这一组反馈。

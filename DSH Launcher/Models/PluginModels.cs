@@ -40,6 +40,37 @@ namespace DSH_Launcher.Models
             }
         }
 
+        private bool _isPendingUninstall;
+
+        /// <summary>
+        /// 卸载按钮是否处于"再点一次确认"的状态(仅界面状态,不影响 profile)。
+        /// <para>
+        /// ⚠ 必须存在**数据对象**上,而不是像早期实现那样改 <c>Button.Content</c>:
+        /// 列表是虚拟化的、容器会被回收重用,而模板里的 <c>Content</c> 是字面量(不是绑定),
+        /// 容器被另一行复用时会把"确认卸载"一起带过去 —— 用户滚动后看到别的插件也处于待确认状态。
+        /// 这与 <see cref="IsSelected"/> 的理由相同。
+        /// </para>
+        /// </summary>
+        public bool IsPendingUninstall
+        {
+            get => this._isPendingUninstall;
+            set
+            {
+                if (this._isPendingUninstall == value)
+                {
+                    return;
+                }
+
+                this._isPendingUninstall = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.IsPendingUninstall)));
+                // 按钮文案是另一个绑定,必须一起通知,否则状态变了文字不变
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(this.UninstallText)));
+            }
+        }
+
+        /// <summary>卸载按钮的文案:待确认时变成「确认卸载」。</summary>
+        public string UninstallText => this._isPendingUninstall ? "确认卸载" : "卸载";
+
         /// <summary>Loader 条目 id(用于 cordis.patch.yml 的启停覆盖);不在组合树里时为空。</summary>
         public string Id { get; init; } = string.Empty;
 

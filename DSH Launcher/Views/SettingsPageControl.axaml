@@ -29,14 +29,7 @@
             <Setter Property="Margin" Value="0 12"/>
             <Setter Property="Background" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
         </Style>
-        <!-- 卡片外观与首页/插件页保持一致(FluentAvalonia 没有 ControlCornerRadius 键,圆角直接写值) -->
-        <Style Selector="Border.card">
-            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Padding" Value="16"/>
-        </Style>
+        <!-- 卡片外观(Border.card)统一定义在 App.axaml,与首页/插件页共用同一份 -->
         <Style Selector="StackPanel.sectionHeader">
             <Setter Property="Orientation" Value="Horizontal"/>
             <Setter Property="Spacing" Value="8"/>
@@ -66,7 +59,7 @@
                     </StackPanel>
                     <TextBlock Classes="rowDesc"
                                Margin="24 4 0 12"
-                               Text="应用启动时的初始行为"/>
+                               Text="应用启动时的初始行为,以及重复启动时已有实例的响应"/>
 
                     <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
@@ -77,6 +70,25 @@
                                       Grid.Column="1"
                                       VerticalAlignment="Center"
                                       IsCheckedChanged="OnShowMainWindowOnStartupChanged"/>
+                    </Grid>
+
+                    <Border Classes="rowSeparator"/>
+
+                    <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Classes="rowTitle" Text="重复启动应用时"/>
+                            <TextBlock Classes="rowDesc" Text="已有实例在运行时,再次启动启动器要执行的动作;选 WebView / 浏览器但 DSH 服务未运行时改为打开主界面"/>
+                        </StackPanel>
+                        <ComboBox x:Name="RepeatLaunchCombo"
+                                  Grid.Column="1"
+                                  Width="180"
+                                  VerticalAlignment="Center"
+                                  SelectionChanged="OnRepeatLaunchChanged">
+                            <ComboBoxItem Content="无动作"/>
+                            <ComboBoxItem Content="打开主界面"/>
+                            <ComboBoxItem Content="打开WebView"/>
+                            <ComboBoxItem Content="打开浏览器"/>
+                        </ComboBox>
                     </Grid>
 
                     <Border Classes="rowSeparator"/>
@@ -155,9 +167,12 @@
                             <TextBlock Classes="rowTitle" Text="代理地址"/>
                             <TextBlock Classes="rowDesc" Text="如 http://127.0.0.1:7890(可省略 http://);留空则不使用代理。立即生效,已在运行的 dsh 服务不受影响"/>
                         </StackPanel>
+                        <!-- 「x」用 TextBox 自带的 clearButton 类;宽度 +34 是为了补回按钮占掉的文字空间,
+                             否则 http://127.0.0.1:7890 这种常见地址会被挤成滚动显示 -->
                         <TextBox x:Name="ProxyUrlBox"
                                  Grid.Column="1"
-                                 Width="180"
+                                 Classes="clearButton"
+                                 Width="214"
                                  VerticalAlignment="Center"
                                  PlaceholderText="不使用代理"
                                  TextChanged="OnProxyUrlTextChanged"
@@ -179,9 +194,11 @@
                             </StackPanel>
                             <TextBox x:Name="NoProxyBox"
                                      Grid.Column="1"
-                                     Width="180"
+                                     Classes="clearButton"
+                                     Width="214"
                                      VerticalAlignment="Center"
                                      PlaceholderText="可选"
+                                     TextChanged="OnNoProxyTextChanged"
                                      LostFocus="OnEnvironmentInputLostFocus"
                                      KeyDown="OnEnvironmentInputKeyDown"/>
                         </Grid>

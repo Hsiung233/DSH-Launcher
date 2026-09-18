@@ -1,10 +1,7 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -12,7 +9,10 @@ using DSH_Launcher.Models;
 
 namespace DSH_Launcher.Services
 {
-    /// <summary>在 WebView 窗口或系统浏览器中打开 Web 端地址(供首页按钮与托盘共用)。</summary>
+    /// <summary>
+    /// WebView 窗口(应用内打开 Web 端)与引擎信息。
+    /// 用系统默认浏览器打开地址的部分已拆到 <see cref="BrowserLauncher"/>。
+    /// </summary>
     public static class WebOpener
     {
         /// <summary>
@@ -144,7 +144,7 @@ namespace DSH_Launcher.Services
             }
             else
             {
-                OpenInBrowser(url);
+                BrowserLauncher.OpenInBrowser(url);
             }
         }
 
@@ -183,70 +183,6 @@ namespace DSH_Launcher.Services
             }
         }
 
-        /// <summary>在系统默认浏览器中打开。返回 false 表示当前平台没有可用的打开方式。</summary>
-        public static bool OpenInBrowser(string url)
-        {
-            var uri = new Uri(url);
-
-            // 用 Avalonia 官方启动器(TopLevel.Launcher → 平台 ILauncher 实现):
-            // Windows = shell 关联程序、macOS = open、Linux = xdg-open,各自平台正确;
-            // 不再手写 open/xdg-open 分支。Win32 实现即 BclLauncher(UseShellExecute=true),
-            // 与旧手写行为等价。
-            // 任意 TopLevel(主窗口或 WebView 窗口)都可以,托盘回调线程拿不到窗口时
-            // 退回经 AvaloniaLocator 取 static TopLevel 实现,都失败则自行走 Process。
-            var launcher = GetLauncher();
-            if (launcher is not null)
-            {
-                var ok = launcher.LaunchUriAsync(uri).GetAwaiter().GetResult();
-                if (ok)
-                {
-                    return true;
-                }
-
-                AppLogService.Write($"[浏览器] Launcher 拒绝打开({url}),退回直接启动方式");
-            }
-
-            try
-            {
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-                return true;
-            }
-            catch (Exception ex)
-            {
-                AppLogService.Write($"[浏览器] 打开失败: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// 取 Avalonia 官方 <see cref="ILauncher"/>。需要已创建的 TopLevel/窗口:
-        /// Win32 的 WindowImpl.TryGetFeature(ILauncher) 返回 BclLauncher。
-        /// 服务类没有窗口引用,这里遍历应用当前窗口取第一个;没有窗口(极早期/纯托盘回调)时返回 null。
-        /// </summary>
-        private static ILauncher? GetLauncher()
-        {
-            try
-            {
-                if (Application.Current?.ApplicationLifetime
-                    is IClassicDesktopStyleApplicationLifetime desktop)
-                {
-                    foreach (var window in desktop.Windows)
-                    {
-                        if (window.PlatformImpl is not null)
-                        {
-                            return window.Launcher;
-                        }
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                // 生命周期不可用时返回 null,由调用方回退
-            }
-
-            return null;
-        }
-
         /// <summary>
         /// 处理 WebView 内部发起的“新窗口/新标签”请求(target="_blank"、window.open 等)。
         /// <see cref="WebViewLinkTarget.AppWebView"/>:不接管,交由 WebView2 底层默认处理;
@@ -273,7 +209,7 @@ namespace DSH_Launcher.Services
 
             var url = target.ToString();
             AppLogService.Write($"[WebView] 页面请求打开链接({mode}): {url}");
-            OpenInBrowser(url);
+            BrowserLauncher.OpenInBrowser(url);
         }
 
         /// <summary>
@@ -381,8 +317,8 @@ namespace DSH_Launcher.Services
                     Height = 640,
                 };
 
-                var icon = LoadAppIcon();
-                if (icon is not null)
+                // 窗口图标(logo-512.png 已嵌入程序集资源,见 AppIcon)
+                if (AppIcon.LoadLogo512() is { } icon)
                 {
                     window.Icon = icon;
                 }
@@ -477,7 +413,7 @@ namespace DSH_Launcher.Services
                     // 忽略关闭异常
                 }
 
-                OpenInBrowser(url);
+                BrowserLauncher.OpenInBrowser(url);
             }
         }
 
@@ -485,12 +421,6 @@ namespace DSH_Launcher.Services
         public static void SaveOpenWebViewBounds()
         {
             _session?.Tracker.Save();
-        }
-
-        private static WindowIcon? LoadAppIcon()
-        {
-            // logo-512.png 已嵌入程序集资源(avares://),见 AppIcon.LoadLogo512
-            return AppIcon.LoadLogo512();
         }
     }
 }

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace DSH_Launcher.Services
+namespace DSH_Launcher.Services.Plugins
 {
     /// <summary>
     /// profile 的 <c>cordis.patch.yml</c> 里"启动器托管区块"的读写。

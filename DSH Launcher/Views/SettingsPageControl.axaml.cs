@@ -37,6 +37,10 @@ namespace DSH_Launcher.Views
                 this.TrayDoubleClickCombo.SelectedIndex = (int)settings.TrayDoubleClick;
                 this.RunDshServiceOnStartupSwitch.IsChecked = settings.RunDshServiceOnStartup;
                 this.ShowMainWindowOnStartupSwitch.IsChecked = settings.ShowMainWindowOnStartup;
+
+                // 该下拉框的界面顺序与枚举值顺序不同,经 RepeatLaunchOptions 显式转换(见其注释)
+                this.RepeatLaunchCombo.SelectedIndex = RepeatLaunchOptions.ToIndex(settings.RepeatLaunchAction);
+
                 // 设置页下拉框只有前三个动作(无动作/WebView/浏览器),枚举顺序一致,直接按索引映射
                 this.AfterDshServiceStartedCombo.SelectedIndex = (int)settings.AfterDshServiceStarted;
                 this.WebViewLinkCombo.SelectedIndex = (int)settings.WebViewLink;
@@ -200,6 +204,27 @@ namespace DSH_Launcher.Views
                 s => s.AfterDshServiceStarted = (WebOpenAction)this.AfterDshServiceStartedCombo.SelectedIndex);
         }
 
+        /// <summary>
+        /// “重复启动应用时”变更时写回设置。
+        /// 构造期的自动选中(第 0 项)早于 <see cref="_pageReady"/>,不能当成用户操作,
+        /// 否则会把用户的设置静默改回「无动作」。
+        /// </summary>
+        private void OnRepeatLaunchChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (!this._pageReady || this._initializing || this.RepeatLaunchCombo.SelectedIndex < 0)
+            {
+                return;
+            }
+
+            var action = RepeatLaunchOptions.FromIndex(this.RepeatLaunchCombo.SelectedIndex);
+            if (SettingsService.Instance.Settings.RepeatLaunchAction == action)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(s => s.RepeatLaunchAction = action);
+        }
+
         /// <summary>npm 源变更:写设置并记录一行日志(便于从 app.log 核对实际生效的地址)。</summary>
         private void OnNpmRegistryChanged(object? sender, SelectionChangedEventArgs e)
         {
@@ -221,8 +246,52 @@ namespace DSH_Launcher.Views
             DshService.Instance.AppendSystemLog($"[环境] npm 源 = {ChildEnvironment.DescribeRegistry()}");
         }
 
-        /// <summary>代理框文字变化只影响“不走代理”的可用状态,不写设置(失焦/回车才提交)。</summary>
-        private void OnProxyUrlTextChanged(object? sender, TextChangedEventArgs e) => this.UpdateNoProxyEnabled();
+        /// <summary>
+        /// 代理框文字变化:更新“不走代理”的可用状态;若被清空则立即落盘(理由见
+        /// <see cref="CommitClearedEnvironmentField"/>)。
+        /// 其余情况仍只在失焦/回车时提交 —— 边打字边提交会把半截 URL 存进设置。
+        /// </summary>
+        private void OnProxyUrlTextChanged(object? sender, TextChangedEventArgs e)
+        {
+            this.UpdateNoProxyEnabled();
+
+            if (string.IsNullOrEmpty(this.ProxyUrlBox.Text)
+                && SettingsService.Instance.Settings.ProxyUrl.Length > 0)
+            {
+                this.CommitClearedEnvironmentField(s => s.ProxyUrl = string.Empty);
+            }
+        }
+
+        /// <summary>“不走代理”框被清空(例如点了自带的「x」)时立即落盘;其余情况仍等失焦/回车。</summary>
+        private void OnNoProxyTextChanged(object? sender, TextChangedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(this.NoProxyBox.Text)
+                && SettingsService.Instance.Settings.NoProxy.Length > 0)
+            {
+                this.CommitClearedEnvironmentField(s => s.NoProxy = string.Empty);
+            }
+        }
+
+        /// <summary>
+        /// 输入框被清空时立即把设置落盘。
+        /// <para>
+        /// 为什么要单独处理:本页的提交时机是「失焦 / 回车」,而 TextBox 自带的清除按钮是
+        /// <c>Focusable=False</c> —— 点它**不会**让输入框失焦,于是"点了「x」后直接退出程序"
+        /// 会把旧值留在设置里(下次启动又冒出来)。只给"清空"开这个口子:它是个完整的动作,
+        /// 而边打字边提交会把半截 URL 存进设置。
+        /// </para>
+        /// </summary>
+        private void CommitClearedEnvironmentField(Action<AppSettings> clear)
+        {
+            // 回填阶段不算用户操作(与 CommitEnvironmentInput 同一套防护)
+            if (!this._pageReady || this._initializing)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(clear);
+            DshService.Instance.AppendSystemLog($"[环境] 代理 = {ChildEnvironment.DescribeProxy()}");
+        }
 
         /// <summary>当前正在处理的输入框失焦/回车提交(见 <see cref="CommitEnvironmentInput"/>)。</summary>
         private void OnEnvironmentInputLostFocus(object? sender, FocusChangedEventArgs e) => this.CommitEnvironmentInput();

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -11,6 +12,44 @@ namespace DSH_Launcher.Models
         WebView = 1,
         Browser = 2,
         MainWindow = 3,
+    }
+
+    /// <summary>
+    /// “重复启动应用时”这一项在设置页下拉框里的选项顺序,以及它与 <see cref="WebOpenAction"/> 值的互转。
+    /// <para>
+    /// 为什么需要这张表:下拉框按使用习惯排(无动作 → 打开主界面 → WebView → 浏览器),
+    /// 与枚举值顺序(None=0 / WebView=1 / Browser=2 / MainWindow=3,托盘那两项正是靠它直接按索引映射)**不同**。
+    /// 若把映射留在界面里,顺序与设置值的对应关系就只存在于 XAML 与事件处理器的对照中,改一处会静默错位;
+    /// 放在这里既被单元测试盯住,界面也只剩两行转调。
+    /// </para>
+    /// </summary>
+    public static class RepeatLaunchOptions
+    {
+        /// <summary>默认动作:打开主界面(加入本设置之前的行为),也是识别不出旧值时回退到的项。</summary>
+        public const WebOpenAction DefaultAction = WebOpenAction.MainWindow;
+
+        /// <summary>下拉框选项顺序:索引即界面顺序,必须与设置页 ComboBoxItem 的书写顺序一致。</summary>
+        private static readonly WebOpenAction[] Items =
+        {
+            WebOpenAction.None,
+            WebOpenAction.MainWindow,
+            WebOpenAction.WebView,
+            WebOpenAction.Browser,
+        };
+
+        /// <summary>下拉框的选项顺序(界面顺序)。</summary>
+        public static IReadOnlyList<WebOpenAction> Order => Items;
+
+        /// <summary>动作 → 下拉框索引;识别不出的值(手改设置文件写出越界值)回退到 <see cref="DefaultAction"/> 的项。</summary>
+        public static int ToIndex(WebOpenAction action)
+        {
+            var index = Array.IndexOf(Items, action);
+            return index >= 0 ? index : Array.IndexOf(Items, DefaultAction);
+        }
+
+        /// <summary>下拉框索引 → 动作;越界索引(理论上不会出现)回退到 <see cref="DefaultAction"/>。</summary>
+        public static WebOpenAction FromIndex(int index)
+            => index >= 0 && index < Items.Length ? Items[index] : DefaultAction;
     }
 
     /// <summary>
@@ -96,6 +135,15 @@ namespace DSH_Launcher.Models
         /// <summary>DSH 服务启动并检测到 Web 地址后的动作(设置页仅提供 None/WebView/Browser),默认无动作。</summary>
         [JsonConverter(typeof(LenientEnumConverter<WebOpenAction>))]
         public WebOpenAction AfterDshServiceStarted { get; set; } = WebOpenAction.None;
+
+        /// <summary>
+        /// 重复启动应用(已有实例在运行时又启动了一次)时,已有实例要做的动作。
+        /// 默认打开主界面 —— 与加入本设置之前的行为一致(早期版本无条件显示主界面)。
+        /// 选 WebView/Browser 但 dsh 服务未运行(拿不到 Web 地址)时回退为打开主界面,
+        /// 判定与托盘动作同一套(见 <c>App.OpenByAction</c>)。
+        /// </summary>
+        [JsonConverter(typeof(LenientEnumConverter<WebOpenAction>))]
+        public WebOpenAction RepeatLaunchAction { get; set; } = RepeatLaunchOptions.DefaultAction;
 
         /// <summary>应用启动时打开主界面;关闭时启动到系统托盘,默认打开。</summary>
         public bool ShowMainWindowOnStartup { get; set; } = true;

@@ -1,7 +1,7 @@
 using System;
 using Avalonia.Threading;
 
-namespace DSH_Launcher.Views
+namespace DSH_Launcher.Views.Shared
 {
     /// <summary>
     /// 日志面板正文刷新的**节流器**:同一时间窗内多次登记只执行一次刷新。

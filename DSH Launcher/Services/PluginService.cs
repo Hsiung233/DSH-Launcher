@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -10,6 +11,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using DSH_Launcher.Models;
+using DSH_Launcher.Services.Plugins;
 
 namespace DSH_Launcher.Services
 {
@@ -48,6 +50,9 @@ namespace DSH_Launcher.Services
         private readonly LogBuffer _log = new(LogBuffer.DefaultMaxChars);
 
         private volatile bool _busy;
+
+        /// <summary>pnpm 可用性探测结果(null = 还没探过);理由见 <see cref="CheckPnpmAvailableAsync"/>。</summary>
+        private bool? _pnpmAvailable;
 
         /// <summary>
         /// 插件变更操作的互斥量。安装/卸载都由 <c>dsh plugin</c> 转发给 profile 目录里的 pnpm,
@@ -205,8 +210,13 @@ namespace DSH_Launcher.Services
         /// 所以这里也只在本次运行的内存里留,不落盘、不跨进程,
         /// 并且始终可以用「刷新目录」强制重拉。
         /// </para>
+        /// <para>
+        /// 用 <see cref="ConcurrentDictionary{TKey,TValue}"/> 而不是普通字典:读写在 await 之后发生,
+        /// 目前靠"调用方都在 UI 线程的同步上下文上"这一约定才安全;换成并发容器后,
+        /// 将来谁把 <c>LoadCatalogAsync</c> 挪到后台线程(或加 <c>ConfigureAwait(false)</c>)都不会踩到。
+        /// </para>
         /// </summary>
-        private readonly Dictionary<string, PluginCatalog> _catalogCache = new(StringComparer.Ordinal);
+        private readonly ConcurrentDictionary<string, PluginCatalog> _catalogCache = new(StringComparer.Ordinal);
 
         /// <summary>取某个地址已缓存的目录;url 为空表示当前设置对应的地址。没有则返回 null。</summary>
         public PluginCatalog? GetCachedCatalog(string? url = null)
@@ -297,7 +307,11 @@ namespace DSH_Launcher.Services
         /// 盘点插件:读 profile 清单 + 组合树 + 已安装版本。
         /// 只读操作,可反复调用(界面刷新、操作后回填都用它)。
         /// </summary>
-        public async Task<PluginSnapshot> LoadAsync()
+        /// <param name="forcePnpmProbe">
+        /// 是否重新探测 pnpm(见 <see cref="CheckPnpmAvailableAsync"/>)。界面上的「刷新」按钮传 true ——
+        /// 用户按提示修好 pnpm 后点刷新,必须看到状态变化。
+        /// </param>
+        public async Task<PluginSnapshot> LoadAsync(bool forcePnpmProbe = false)
         {
             var warnings = new List<string>();
             var dependencies = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -343,9 +357,9 @@ namespace DSH_Launcher.Services
             }
 
             var overrides = ReadOverrides();
-            var pnpmAvailable = await CheckPnpmAvailableAsync();
+            var pnpmAvailable = await CheckPnpmAvailableAsync(forcePnpmProbe);
 
-            var (exitCode, dump, dumpError) = await DshService.Instance.RunDshCaptureAsync(
+            var (exitCode, dump, dumpError) = await DshCli.RunCaptureAsync(
                 $"--profile {ProfileName} --dump-config");
             if (exitCode != 0 || dump.Length == 0)
             {
@@ -639,11 +653,40 @@ namespace DSH_Launcher.Services
             return succeeded;
         }
 
-        /// <summary>探测 pnpm 是否可用(安装/卸载都由 dsh plugin 转发给 pnpm)。</summary>
-        public async Task<bool> CheckPnpmAvailableAsync()
+        /// <summary>
+        /// 探测 pnpm 是否可用(安装/卸载都由 dsh plugin 转发给 pnpm)。
+        /// <para>
+        /// ⚠ 结果按**本次运行**缓存:探测要起一个子进程(类 Unix 上还是登录 shell,要加载 profile),
+        /// 而列表刷新发生在每次进页面、每次批量操作之后 —— 每次都探一遍纯属浪费。
+        /// 缓存由 <paramref name="forceRefresh"/>(界面的「刷新」按钮)或 <see cref="InvalidatePnpmProbe"/>
+        /// (命令明确报 127 = 找不到 pnpm)打破。
+        /// </para>
+        /// </summary>
+        public async Task<bool> CheckPnpmAvailableAsync(bool forceRefresh = false)
         {
-            var (stdout, _) = await RunCaptureAsync("pnpm --version");
-            return VersionRegex().IsMatch(stdout);
+            if (!forceRefresh && this._pnpmAvailable is bool cached)
+            {
+                return cached;
+            }
+
+            try
+            {
+                var result = await ChildProcessRunner.CaptureAsync("pnpm --version");
+                this._pnpmAvailable = VersionRegex().IsMatch(result.Stdout);
+            }
+            catch (Exception)
+            {
+                // 探测本身失败(命令不可用等)按"不可用"处理
+                this._pnpmAvailable = false;
+            }
+
+            return this._pnpmAvailable.Value;
+        }
+
+        /// <summary>丢弃 pnpm 探测结果,下一次刷新会重新探测。</summary>
+        private void InvalidatePnpmProbe()
+        {
+            this._pnpmAvailable = null;
         }
 
         /// <summary>打开 profile 目录,便于用户手工查看/编辑清单与补丁层。</summary>
@@ -683,7 +726,7 @@ namespace DSH_Launcher.Services
                         + "请先安装/修复 pnpm(例如 npm i -g pnpm@10),再重试。\r\n");
                 }
 
-                var exitCode = await DshService.Instance.RunDshStreamingAsync(
+                var exitCode = await DshCli.RunStreamingAsync(
                     $"plugin --profile {ProfileName} {pluginArguments}",
                     line => this.AppendLog(line));
                 this.AppendLog($"[退出代码 {exitCode}]");
@@ -707,6 +750,8 @@ namespace DSH_Launcher.Services
 
             if (exitCode == 127)
             {
+                // 命令明确报"找不到 pnpm":探测结果作废,下一次刷新会重探(用户可能刚装上)
+                this.InvalidatePnpmProbe();
                 this.AppendLog("提示:未找到 pnpm。请先执行 npm install -g pnpm 后重试。\r\n");
             }
             else if (exitCode != 0)
@@ -721,7 +766,8 @@ namespace DSH_Launcher.Services
         /// dsh 会把 <c>.</c>/<c>../x</c> 这类相对路径按“调用者的工作目录”改写,而启动器的工作目录不确定,
         /// 因此本地路径一律转成绝对路径再交给 pnpm。
         /// </summary>
-        private static string NormalizeSpec(string spec)
+        /// <remarks>internal 而非 private:被单元测试覆盖(见 DSH Launcher.Tests)。</remarks>
+        internal static string NormalizeSpec(string spec)
         {
             spec = spec.Trim();
             if (spec.Length == 0)
@@ -802,7 +848,8 @@ namespace DSH_Launcher.Services
         /// <c>config:</c> 下面的内容(含 <c>!!js</c> 表达式)整段跳过——那里的同名字段不代表条目状态。
         /// 输出的 <c># == &lt;层&gt;</c> 注释行按层分组展示,同一 id 只会出现一次。
         /// </summary>
-        private static List<(string Id, string Name, bool Disabled)> ParseCompositionDump(string dump)
+        /// <remarks>internal 而非 private:这段"YAML 缩进知识"被单元测试覆盖(见 DSH Launcher.Tests)。</remarks>
+        internal static List<(string Id, string Name, bool Disabled)> ParseCompositionDump(string dump)
         {
             var rows = new List<(string Id, string Name, bool Disabled)>();
             string? id = null;
@@ -904,35 +951,6 @@ namespace DSH_Launcher.Services
 
         private static string Truncate(string value, int maxLength)
             => value.Length <= maxLength ? value : value[..maxLength] + "…";
-
-        /// <summary>执行一条命令并捕获 stdout/stderr(用于 pnpm 探测)。</summary>
-        private static async Task<(string Stdout, string Stderr)> RunCaptureAsync(string command)
-        {
-            try
-            {
-                // pnpm 是 Node 程序、写 UTF-8;cmd 自身消息是 OEM 代码页 —— 原样收下再逐行判定
-                var startInfo = PlatformProcess.CreateShellStartInfo(
-                    command, redirectOutput: true, rawByteOutput: true);
-
-                // npm 源 / 代理:探测包管理器时也保持一致(否则“探测失败但手工命令可用”的报错会莫名奇妙)
-                ChildEnvironment.Apply(startInfo);
-
-                using var process = new Process { StartInfo = startInfo };
-                process.Start();
-
-                // 必须先 Start 再读 StandardOutput,否则抛
-                // "StandardOut has not been redirected or the process hasn't started yet"
-                var stdout = process.StandardOutput.ReadToEndAsync();
-                var stderr = process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync();
-                return (PlatformProcess.DecodeChildOutputText(await stdout),
-                    PlatformProcess.DecodeChildOutputText(await stderr));
-            }
-            catch (Exception ex)
-            {
-                return (string.Empty, ex.Message);
-            }
-        }
 
         [GeneratedRegex(@"\d+\.\d+")]
         private static partial Regex VersionRegex();

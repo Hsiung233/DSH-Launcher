@@ -109,7 +109,10 @@ namespace DSH_Launcher.Services
 
         /// <summary>
         /// 锁内调用:超过上限时从头部丢弃。
-        /// 丢弃量 = 超出部分 + 一点余量,再向后对齐到行首(找不到换行就按原位置切,保证不会把缓冲区丢空)。
+        /// 丢弃量 = 超出部分 + 一点余量,再向后对齐到行首。
+        /// ⚠ 在 <see cref="LineSnapLimitChars"/> 窗口内找不到换行时,必须**按原位置切**而不是继续切到窗口末尾:
+        /// 否则"缓冲区整段是一行超长文本"(例如只有 \r 没有 \n 的进度输出)会被整个丢空,
+        /// 面板只剩一行"已省略 N 字符",看起来像日志没了。按原位置切只是切在行中间,内容还在。
         /// </summary>
         private void Trim()
         {
@@ -128,9 +131,14 @@ namespace DSH_Launcher.Services
                 cut++;
             }
 
-            if (cut < this._builder.Length && this._builder[cut] == '\n')
+            if (cut >= this._builder.Length || this._builder[cut] != '\n')
             {
-                cut++;
+                // 窗口内没有换行:退回原位置(宁可切在行中间,也不把缓冲区丢空)
+                cut = target;
+            }
+            else
+            {
+                cut++; // 换行本身也丢掉,保留内容从下一行行首开始
             }
 
             this._builder.Remove(0, cut);

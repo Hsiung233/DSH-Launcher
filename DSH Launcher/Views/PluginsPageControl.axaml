@@ -9,16 +9,6 @@
 
     <UserControl.Resources>
         <ResourceDictionary>
-            <ResourceDictionary.ThemeDictionaries>
-                <!-- 日志区凹陷底色(与首页一致的取色方式:浅色主题下 Fluent 的填充色几乎看不出层次) -->
-                <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="CodeAreaFillBrush" Color="#0F000000"/>
-                </ResourceDictionary>
-                <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="CodeAreaFillBrush" Color="#14FFFFFF"/>
-                </ResourceDictionary>
-            </ResourceDictionary.ThemeDictionaries>
-
             <!-- 列表容器:用 VirtualizingStackPanel 把 ItemsControl 变成虚拟化列表。
                  ItemsControl 默认的 StackPanel **不虚拟化** —— 152 条组合条目会被全部实例化并参与测量排布
                  (实测 UIA 里能看到 152 个启停按钮);换成这个后只实现可视区域内的那几行 -->
@@ -75,7 +65,7 @@
                                     IsVisible="{Binding HasOverride}"
                                     Click="OnClearOverrideClick"
                                     ToolTip.Tip="删除启动器写入的启停覆盖,回到插件自带的状态"/>
-                            <Button Content="卸载"
+                            <Button Content="{Binding UninstallText}"
                                     IsVisible="{Binding CanUninstall}"
                                     Click="OnUninstallClick"
                                     ToolTip.Tip="从 profile 移除该包(再点一次确认)"/>
@@ -239,10 +229,7 @@
                  预留槽位是因为 Fluent 的滚动条是 **overlay**(画在内容之上),不预留就会遮住控件右边缘 -->
             <Border Grid.Column="0"
                     Width="254"
-                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="8"
+                    Classes="card"
                     Padding="12">
                 <Grid RowDefinitions="*,Auto" RowSpacing="10">
                     <ScrollViewer Grid.Row="0"
@@ -267,7 +254,9 @@
                                 <TextBlock Text="筛选组合条目"
                                            FontSize="12"
                                            Opacity="0.6"/>
+                                <!-- 同样用 TextBox 自带的 clearButton 类提供「x」(见上面搜索框的说明) -->
                                 <TextBox x:Name="EntryFilterBox"
+                                         Classes="clearButton"
                                          PlaceholderText="包名或条目 id"
                                          TextChanged="OnEntryFilterChanged"/>
                             </StackPanel>
@@ -331,7 +320,9 @@
                                    FontSize="12"
                                    Opacity="0.6"
                                    ToolTip.Tip="用于目录里没有的包(本地路径 / 私有仓库)。目录外的插件没有经过策展校验,只安装你信任的来源。"/>
+                        <!-- 「x」同样用自带的 clearButton 类;本栏较窄,文字过长时输入框内部横向滚动 -->
                         <TextBox x:Name="InstallSpecBox"
+                                 Classes="clearButton"
                                  PlaceholderText="包名 / tarball / 路径 / git"
                                  KeyDown="OnInstallSpecKeyDown"/>
                         <Button x:Name="InstallPluginButton"
@@ -363,10 +354,7 @@
                          勾选态存在 PluginEntry 上,所以左右两列(共用同一批实例)天然同步 -->
                     <Border Grid.Row="0"
                             Grid.ColumnSpan="2"
-                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
+                            Classes="card"
                             Padding="12 8">
                         <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="12">
                             <CheckBox x:Name="SelectAllBox"
@@ -410,11 +398,7 @@
                     <!-- 左列:已安装的插件(dsh.profile 的 dependencies) -->
                     <Border Grid.Row="1"
                             Grid.Column="0"
-                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="16">
+                            Classes="card">
                         <Grid RowDefinitions="Auto,*" RowSpacing="4">
                             <StackPanel Grid.Row="0" Spacing="4">
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
@@ -464,11 +448,7 @@
                          它占满整列,折叠起来只会留一片空白) -->
                     <Border Grid.Row="1"
                             Grid.Column="1"
-                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="16">
+                            Classes="card">
                         <Grid RowDefinitions="Auto,Auto,*" RowSpacing="4">
                             <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="8">
                                 <TextBlock Text="全部组合条目"
@@ -506,16 +486,17 @@
                       RowDefinitions="Auto,*"
                       RowSpacing="8">
 
+                    <!-- 搜索框的「x」清除按钮用 TextBox 自带的 clearButton 类(主题模板提供的
+                         InnerRightContent:图标 + 直接绑到 TextBox.Clear 命令),不再自己叠按钮。
+                         它的显示条件是「有焦点 且 非空 且 非只读 且 不接受回车」——这是该控件/主题的
+                         标准行为(与 WinUI 一致):正在编辑时给出清除入口,失焦后收起。 -->
                     <TextBox x:Name="CatalogSearchBox"
+                             Classes="clearButton"
                              PlaceholderText="搜索插件名 / 作者 / 描述"
                              TextChanged="OnCatalogSearchTextChanged"/>
 
                     <Border Grid.Row="1"
-                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="16">
+                            Classes="card">
                         <Grid RowDefinitions="Auto,*" RowSpacing="8">
                             <TextBlock x:Name="CatalogStatusText"
                                        FontSize="12"

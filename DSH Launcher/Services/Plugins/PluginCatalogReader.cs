@@ -4,7 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using DSH_Launcher.Models;
 
-namespace DSH_Launcher.Services
+namespace DSH_Launcher.Services.Plugins
 {
     /// <summary>
     /// 策展目录 JSON 的解析:把两份结构完全不同的社区目录归一成 <see cref="PluginCatalog"/>。
@@ -168,7 +168,8 @@ namespace DSH_Launcher.Services
         /// 从目录给的 <c>dsh plugin --profile &lt;name&gt; add &lt;spec&gt;</c> 里取出 <c>&lt;spec&gt;</c>。
         /// 目录已经算好了首选来源(npm 包名优先,没有 npm 包时是 github:owner/repo)。
         /// </summary>
-        private static string ExtractInstallSpec(string install)
+        /// <remarks>internal 而非 private:被单元测试覆盖(见 DSH Launcher.Tests)。</remarks>
+        internal static string ExtractInstallSpec(string install)
         {
             if (install.Length == 0)
             {

@@ -8,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using DSH_Launcher.Services;
+using DSH_Launcher.Views.Shared;
 using FluentAvalonia.UI.Controls;
 
 namespace DSH_Launcher.Views
@@ -416,7 +417,7 @@ namespace DSH_Launcher.Views
         {
             if (this._dsh.WebUrl is string url)
             {
-                WebOpener.OpenInBrowser(url);
+                BrowserLauncher.OpenInBrowser(url);
             }
         }
 

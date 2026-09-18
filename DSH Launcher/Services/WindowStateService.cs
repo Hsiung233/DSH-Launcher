@@ -47,7 +47,11 @@ namespace DSH_Launcher.Services
     {
         public static WindowStateService Instance { get; } = new();
 
-        private static readonly string StateFilePath = Path.Combine(
+        /// <summary>
+        /// 状态文件路径。与 <see cref="SettingsService"/> / <see cref="AppLogService"/> 同样的防御:**延迟求值**,
+        /// 应用启动极早期解析用户目录可能瞬时为空,用 static readonly 会把空路径永久固化。
+        /// </summary>
+        private static string StateFilePath => Path.Combine(
             PlatformProcess.LocalAppDataDirectory,
             "DSH Launcher", "Settings", "window-state.json");
 

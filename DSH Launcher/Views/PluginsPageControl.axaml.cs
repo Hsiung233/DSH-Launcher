@@ -11,6 +11,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using DSH_Launcher.Models;
 using DSH_Launcher.Services;
+using DSH_Launcher.Views.Shared;
 
 namespace DSH_Launcher.Views
 {
@@ -25,22 +26,11 @@ namespace DSH_Launcher.Views
 
         private PluginSnapshot? _snapshot;
 
-        /// <summary>本次会话已拉到的插件目录(为空 = 还没拉过)。</summary>
-        private PluginCatalog? _catalog;
-
-        /// <summary>正在拉取目录的地址;null = 当前没有在拉的请求(用于忙碌状态与同地址去重)。</summary>
-        private string? _catalogLoadingUrl;
-
         /// <summary>
-        /// 目录请求的世代号。
-        /// <para>
-        /// ⚠ 为什么必须有它:目录拉取要 0.1-8 秒,用户完全可能在这个窗口里再切来源。
-        /// 没有它就会出现“慢的旧来源最后落地”,列表显示 A 而下拉已经是 B。
-        /// 每次发起新请求(或命中缓存直接显示)都自增,回调里发现自己的号过期就丢弃结果。
-        /// 旧结果虽然不显示,但已经被服务层缓存了,下次切回来是瞬时的。
-        /// </para>
+        /// 目录加载状态机:缓存命中、同地址去重、世代号(防"慢的旧来源覆盖快的新来源")。
+        /// 这段逻辑与界面无关,单独成类并被单元测试覆盖 —— 见 <see cref="CatalogLoadController"/>。
         /// </summary>
-        private int _catalogRequestId;
+        private readonly CatalogLoadController _catalogLoader;
 
         /// <summary>回填下拉框/文本框或重建分类列表时置位,避免把回填当成用户操作。</summary>
         private bool _initializing;
@@ -62,8 +52,10 @@ namespace DSH_Launcher.Views
         /// <summary>已订阅选中态变化的条目(每次刷新重建,用于退订)。</summary>
         private readonly List<PluginEntry> _observedEntries = [];
 
-        /// <summary>卸载的二次确认状态(点击「卸载」→ 变成「确认卸载」,5 秒内再点才真的卸载)。</summary>
-        private string? _pendingUninstall;
+        /// <summary>
+        /// 卸载二次确认的世代号:每次置位自增,倒计时到点后只有"仍是本人置位的那一次"才撤回。
+        /// </summary>
+        private int _uninstallArmId;
 
         /// <summary>输出浮窗正文的刷新节流器(理由见 <see cref="LogAppendThrottle"/>)。</summary>
         private readonly LogAppendThrottle _pluginLogThrottle;
@@ -78,6 +70,12 @@ namespace DSH_Launcher.Views
 
             this._pluginLogThrottle = new LogAppendThrottle(this.RefreshPluginLog);
             this._logCopy = new CopyFeedback(this.CopyPluginLogButtonText, "复制");
+
+            // 三个依赖都来自服务层:地址由设置决定、缓存与服务层共用、真拉取也走服务层
+            this._catalogLoader = new CatalogLoadController(
+                PluginService.ResolveCatalogUrl,
+                url => PluginService.Instance.GetCachedCatalog(url),
+                forceReload => PluginService.Instance.LoadCatalogAsync(forceReload));
 
             // Esc 关闭输出浮窗。用**隧道**阶段先拿到并标记已处理:
             // 本页之外(FluentAvalonia 的 FANavigationView)也用了 Esc,不能让它抢走。
@@ -139,7 +137,11 @@ namespace DSH_Launcher.Views
         }
 
         /// <summary>重新读取 profile 清单与组合树,刷新全部列表。</summary>
-        private async Task RefreshAsync()
+        /// <param name="forcePnpmProbe">
+        /// 是否重新探测 pnpm。界面上的「刷新」按钮传 true(提示里让用户"修好 pnpm 后点刷新",
+        /// 不重探就看不到状态变化);其余刷新(进页面、操作后回填)用缓存值。
+        /// </param>
+        private async Task RefreshAsync(bool forcePnpmProbe = false)
         {
             if (this._loading)
             {
@@ -150,7 +152,7 @@ namespace DSH_Launcher.Views
             this.UpdateBusy();
             try
             {
-                var snapshot = await PluginService.Instance.LoadAsync();
+                var snapshot = await PluginService.Instance.LoadAsync(forcePnpmProbe);
                 this._snapshot = snapshot;
                 this.ApplySnapshot(snapshot);
             }
@@ -442,7 +444,7 @@ namespace DSH_Launcher.Views
 
         private void UpdateBusy()
         {
-            var busy = this._loading || this._catalogLoadingUrl is not null || this._plugins.IsBusy;
+            var busy = this._loading || this._catalogLoader.IsLoading || this._plugins.IsBusy;
             this.PluginsProgress.IsActive = busy;
             this.RefreshPluginsButton.IsEnabled = !busy;
             this.RevealProfileButton.IsEnabled = !busy;
@@ -488,41 +490,59 @@ namespace DSH_Launcher.Views
         /// <summary>卸载(二次确认:第一次点击只把按钮切成「确认卸载」)。</summary>
         private async void OnUninstallClick(object? sender, RoutedEventArgs e)
         {
-            if (sender is not Button button || button.DataContext is not PluginEntry entry)
+            if (sender is not Button { DataContext: PluginEntry entry })
             {
                 return;
             }
 
-            if (!string.Equals(this._pendingUninstall, entry.Name, StringComparison.Ordinal))
+            if (!entry.IsPendingUninstall)
             {
-                this._pendingUninstall = entry.Name;
-                button.Content = "确认卸载";
-                _ = this.RestoreUninstallButtonAsync(entry.Name, button);
+                this.ArmUninstallConfirmation(entry);
                 return;
             }
 
-            this._pendingUninstall = null;
-            button.Content = "卸载";
+            entry.IsPendingUninstall = false;
             await this._plugins.UninstallAsync(entry.Name);
             await this.RefreshAsync();
         }
 
-        /// <summary>5 秒内没有再点,自动撤回「确认卸载」状态,避免误触。</summary>
-        private async Task RestoreUninstallButtonAsync(string packageName, Button button)
+        /// <summary>
+        /// 把某一条置为「待确认卸载」,并在 5 秒后自动撤回(避免误触)。
+        /// 状态写在数据对象上而不是按钮上 —— 理由见 <see cref="PluginEntry.IsPendingUninstall"/>。
+        /// </summary>
+        private void ArmUninstallConfirmation(PluginEntry entry)
+        {
+            // 同一时刻只允许一条待确认:否则用户点了 A 又点 B,两行都显示「确认卸载」
+            foreach (var other in this.VisibleEntries())
+            {
+                if (!ReferenceEquals(other, entry))
+                {
+                    other.IsPendingUninstall = false;
+                }
+            }
+
+            entry.IsPendingUninstall = true;
+
+            // 世代号:期间若同一条又被重新置位,旧的倒计时不该撤销新的状态
+            var armId = ++this._uninstallArmId;
+            _ = this.DisarmUninstallConfirmationAsync(entry, armId);
+        }
+
+        /// <summary>5 秒内没有再点,自动撤回「确认卸载」状态。</summary>
+        private async Task DisarmUninstallConfirmationAsync(PluginEntry entry, int armId)
         {
             await Task.Delay(5000);
 
-            if (string.Equals(this._pendingUninstall, packageName, StringComparison.Ordinal)
-                && button.Content as string == "确认卸载")
+            if (armId == this._uninstallArmId)
             {
-                this._pendingUninstall = null;
-                button.Content = "卸载";
+                entry.IsPendingUninstall = false;
             }
         }
 
+        /// <summary>5 秒内没有再点,自动撤回「确认卸载」状态,避免误触。</summary>
         private void OnEntryFilterChanged(object? sender, TextChangedEventArgs e) => this.ApplyEntryFilter();
 
-        private void OnRefreshPluginsClick(object? sender, RoutedEventArgs e) => _ = this.RefreshAsync();
+        private void OnRefreshPluginsClick(object? sender, RoutedEventArgs e) => _ = this.RefreshAsync(forcePnpmProbe: true);
 
         private void OnRevealProfileClick(object? sender, RoutedEventArgs e) => this._plugins.OpenProfileDirectory();
 
@@ -539,7 +559,7 @@ namespace DSH_Launcher.Views
 
             // 首次进「安装新插件」时才拉目录(3-7MB,不必在打开插件页时就下载);
             // 之后切回来命中的是内存里的那份,不会重复下载
-            if (this.PluginsViewList.SelectedIndex == InstallViewIndex && this._catalog is null)
+            if (this.PluginsViewList.SelectedIndex == InstallViewIndex && this._catalogLoader.Catalog is null)
             {
                 _ = this.EnsureCatalogAsync();
             }
@@ -558,73 +578,39 @@ namespace DSH_Launcher.Views
 
         /// <summary>
         /// 拉取策展目录并刷新列表。
-        /// <list type="bullet">
-        /// <item>已有该来源的缓存(在服务层,键是地址)→ 立即显示,切换来源是瞬时的。</item>
-        /// <item>同一地址已在拉取 → 不重复发起(但用户又切了来源会另发起,见下)。</item>
-        /// <item>每次发起都取新世代号,回调时过期则丢弃 —— 避免慢的旧来源覆盖快的新来源。</item>
-        /// </list>
+        /// 缓存命中 / 同地址去重 / 世代号(防慢的旧来源覆盖新来源)都在
+        /// <see cref="CatalogLoadController"/> 里,这里只按结果更新界面。
         /// </summary>
         private async Task EnsureCatalogAsync(bool forceReload = false)
         {
-            var url = PluginService.ResolveCatalogUrl();
-
-            // ① 命中缓存:立即显示。
-            //    这里也要自增世代号 —— 否则“A→B→A”时,A 命中缓存秒显,
-            //    随后在飞的 B 请求完成(号还等于当前号)会把列表改成 B。
-            if (!forceReload && PluginService.Instance.GetCachedCatalog(url) is { } cached)
+            var result = await this._catalogLoader.EnsureAsync(forceReload, onStarted: () =>
             {
-                this._catalogRequestId++;
-                this._catalogLoadingUrl = null;
-                this._catalog = cached;
-                this.ApplyCatalog(cached);
+                // 真正发起拉取时才显示"正在读取"(命中缓存是瞬时的,不该闪一下)
+                this.CatalogStatusText.Text = "正在读取插件目录…";
                 this.UpdateBusy();
-                return;
-            }
+            });
 
-            // ② 同一地址已在拉取且不是强制刷新 → 不重复发起
-            if (!forceReload && string.Equals(this._catalogLoadingUrl, url, StringComparison.Ordinal))
+            switch (result.Outcome)
             {
-                return;
-            }
-
-            var requestId = ++this._catalogRequestId;
-            this._catalogLoadingUrl = url;
-            this.UpdateBusy();
-            this.CatalogStatusText.Text = "正在读取插件目录…";
-            try
-            {
-                var catalog = await PluginService.Instance.LoadCatalogAsync(forceReload);
-
-                // 期间用户又切了来源 / 又点过刷新 → 丢弃本次结果(服务层已缓存,切回来即命中)
-                if (requestId != this._catalogRequestId)
-                {
-                    return;
-                }
-
-                this._catalog = catalog;
-                this.ApplyCatalog(catalog);
-            }
-            catch (Exception ex)
-            {
-                if (requestId != this._catalogRequestId)
-                {
-                    return;
-                }
-
-                // 上游刻意不拿旧数据冒充答案:这里也不回退缓存,直接把原因显示出来
-                this.CatalogStatusText.Text =
-                    $"读取插件目录失败:{ex.Message}{Environment.NewLine}"
-                    + $"地址:{url}{Environment.NewLine}"
-                    + "可检查网络后点「刷新目录」重试。";
-            }
-            finally
-            {
-                // 只有还是最新那次请求才收尾;被顶替的请求不动状态(状态已归新请求所有)
-                if (requestId == this._catalogRequestId)
-                {
-                    this._catalogLoadingUrl = null;
+                case CatalogLoadOutcome.DisplayedFromCache:
+                case CatalogLoadOutcome.Loaded:
+                    this.ApplyCatalog(result.Catalog!);
                     this.UpdateBusy();
-                }
+                    break;
+
+                case CatalogLoadOutcome.Failed:
+                    // 上游刻意不拿旧数据冒充答案:这里也不回退缓存,直接把原因显示出来
+                    this.CatalogStatusText.Text =
+                        $"读取插件目录失败:{result.Error}{Environment.NewLine}"
+                        + $"地址:{this._catalogLoader.LastRequestedUrl}{Environment.NewLine}"
+                        + "可检查网络后点「刷新目录」重试。";
+                    this.UpdateBusy();
+                    break;
+
+                case CatalogLoadOutcome.Superseded:
+                case CatalogLoadOutcome.AlreadyLoading:
+                    // 被顶替的请求不动状态(状态已归新请求所有);同地址重复发起的请求无事可做
+                    break;
             }
         }
 
@@ -664,7 +650,7 @@ namespace DSH_Launcher.Views
         /// <summary>按关键词 / 分类 / 排序刷新目录列表(纯内存过滤,3722 条也很快)。</summary>
         private void ApplyCatalogFilter()
         {
-            if (this._catalog is null)
+            if (this._catalogLoader.Catalog is not { } catalog)
             {
                 return;
             }
@@ -678,14 +664,14 @@ namespace DSH_Launcher.Views
                 _ => PluginCatalogSort.Stars,
             };
 
-            var results = PluginService.FilterCatalog(this._catalog, keyword, category, sort);
+            var results = PluginService.FilterCatalog(catalog, keyword, category, sort);
             this.CatalogList.ItemsSource = results;
 
             // dsh-plugin.org 目录没有 updated 字段,此时不显示“目录更新于”
-            var updated = this._catalog.Updated.Length > 0 ? $" · 目录更新于 {this._catalog.Updated}" : string.Empty;
-            this.CatalogStatusText.Text = results.Count == this._catalog.Entries.Count
+            var updated = catalog.Updated.Length > 0 ? $" · 目录更新于 {catalog.Updated}" : string.Empty;
+            this.CatalogStatusText.Text = results.Count == catalog.Entries.Count
                 ? $"共 {results.Count} 个插件{updated}"
-                : $"命中 {results.Count} 个 / 全部 {this._catalog.Entries.Count} 个{updated}";
+                : $"命中 {results.Count} 个 / 全部 {catalog.Entries.Count} 个{updated}";
         }
 
         private void OnCatalogSearchTextChanged(object? sender, TextChangedEventArgs e)
@@ -746,7 +732,7 @@ namespace DSH_Launcher.Views
         {
             if (sender is Button { DataContext: PluginCatalogEntry entry } && entry.PageUrl.Length > 0)
             {
-                WebOpener.OpenInBrowser(entry.PageUrl);
+                BrowserLauncher.OpenInBrowser(entry.PageUrl);
             }
         }
 
