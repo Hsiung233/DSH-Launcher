@@ -308,13 +308,19 @@ namespace DSH_Launcher.Services
             CommentHandling = JsonCommentHandling.Skip,
         };
 
-        private readonly StringBuilder _log = new();
+        /// <summary>
+        /// 日志面板正文的字符数上限(只保留尾部)。理由同 <see cref="DshService"/>:
+        /// pnpm/dsh 报错时会刷屏,而面板是"整段文本 + 每行追加全量重排"的实现,
+        /// 不限长会把 UI 线程钉死在文本排版里(实测首页那次 43 万字符的假死)。
+        /// </summary>
+        private const int MaxLogChars = 50_000;
 
         /// <summary>
-        /// 日志缓冲区的锁。日志会被多个线程写:RunDshStreamingAsync 的 stdout/stderr 回调(线程池)
-        /// 与 UI 线程的操作日志;读侧还有 LogText 与 ClearLog。StringBuilder 不是线程安全的。
+        /// 插件页日志缓冲区。日志会被多个线程写:RunDshStreamingAsync 的 stdout/stderr 回调(线程池)
+        /// 与 UI 线程的操作日志;读侧还有 LogText 与 ClearLog —— 线程安全与长度裁剪都由
+        /// <see cref="LogBuffer"/> 负责。
         /// </summary>
-        private readonly Lock _logLock = new();
+        private readonly LogBuffer _log = new(MaxLogChars);
 
         private volatile bool _busy;
 
@@ -381,16 +387,7 @@ namespace DSH_Launcher.Services
         /// <summary>是否有安装/卸载/启停操作正在进行。</summary>
         public bool IsBusy => this._busy;
 
-        public string LogText
-        {
-            get
-            {
-                lock (this._logLock)
-                {
-                    return this._log.ToString();
-                }
-            }
-        }
+        public string LogText => this._log.ToString();
 
         /// <summary>profile 目录(&lt;DSH_HOME&gt;/profiles/&lt;profile&gt;)。</summary>
         public static string ProfileDirectory => Path.Combine(DshHomeDirectory, "profiles", ProfileName);
@@ -433,10 +430,9 @@ namespace DSH_Launcher.Services
         public void AppendLog(string message)
         {
             var line = message.EndsWith('\n') ? message : message + "\r\n";
-            lock (this._logLock)
-            {
-                this._log.Append(line);
-            }
+
+            // 超长时由 LogBuffer 从头部按整行裁剪(见 MaxLogChars 的说明)
+            this._log.Append(line);
 
             // 事件在锁外触发:处理器会 Post 到 UI 线程,放在锁里没有好处,只会扩大临界区
             LogAppended?.Invoke(line);
@@ -451,10 +447,7 @@ namespace DSH_Launcher.Services
 
         public void ClearLog()
         {
-            lock (this._logLock)
-            {
-                this._log.Clear();
-            }
+            this._log.Clear();
 
             LogsCleared?.Invoke();
         }

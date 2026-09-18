@@ -38,6 +38,21 @@ namespace DSH_Launcher.Views
         private const int MinPort = 1;
         private const int MaxPort = 65535;
 
+        /// <summary>
+        /// 日志面板正文的刷新间隔。
+        /// <para>
+        /// ⚠ 为什么不能逐行刷新:日志一秒可能来几百行,而面板是"整段文本塞进一个
+        /// SelectableTextBlock + Wrap"的实现 —— 每次改 Text 都要**整段重新塑形/排版**
+        /// (外加一次 O(n) 的字符串复制),行数一多就是平方级。实测:<c>dsh web</c> 启动失败
+        /// 刷出 43 万字符时,UI 线程被钉死在 Avalonia 文本排版里,窗口直接"未响应"。
+        /// 所以这里按固定间隔把同一窗口内的多行合并成**一次**刷新,服务侧另有限长兜底。
+        /// </para>
+        /// </summary>
+        private static readonly TimeSpan LogRefreshInterval = TimeSpan.FromMilliseconds(200);
+
+        /// <summary>已登记一次待执行的日志刷新(节流:同一时间窗内多次追加只刷一次)。</summary>
+        private bool _logRefreshPending;
+
         public HomePageControl()
         {
             InitializeComponent();
@@ -209,11 +224,40 @@ namespace DSH_Launcher.Views
 
         private void Dsh_LogAppended(string text)
         {
-            Dispatcher.UIThread.Post(() =>
+            // 注意:这里**不能**直接 LogTextBlock.Text += text(理由见 LogRefreshInterval),
+            // 只登记"待刷新",由定时器按固定间隔整段同步一次(文本内容从服务侧现取)。
+            if (Dispatcher.UIThread.CheckAccess())
             {
-                this.LogTextBlock.Text += text;
-                this.ScrollLogToEnd();
-            });
+                this.ScheduleLogRefresh();
+            }
+            else
+            {
+                // 事件通常在后台线程触发(stdout/stderr 回调)
+                Dispatcher.UIThread.Post(this.ScheduleLogRefresh);
+            }
+        }
+
+        /// <summary>
+        /// 登记一次日志刷新。已有待执行的任务时直接合并 —— 这是**节流**而不是防抖:
+        /// 防抖(每次到达都重置计时)在持续刷屏时永远不会触发,面板反而彻底不刷新了。
+        /// </summary>
+        private void ScheduleLogRefresh()
+        {
+            if (this._logRefreshPending)
+            {
+                return;
+            }
+
+            this._logRefreshPending = true;
+
+            // Background 优先级:等本轮的布局/渲染做完再刷新,不跟渲染抢时间片
+            DispatcherTimer.RunOnce(this.OnLogRefreshTick, LogRefreshInterval, DispatcherPriority.Background);
+        }
+
+        private void OnLogRefreshTick()
+        {
+            this._logRefreshPending = false;
+            this.UpdateLog();
         }
 
         private void Dsh_StateChanged()

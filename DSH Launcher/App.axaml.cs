@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.IO.Pipes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -62,7 +64,7 @@ public partial class App : Application
 
             // 单实例:已有实例在运行时,通过命名管道通知其显示主界面,然后退出当前进程
             _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
-            if (!createdNew)
+            if (!createdNew && !TryAcquireSingleInstanceMutex())
             {
                 try
                 {
@@ -80,11 +82,44 @@ public partial class App : Application
                 return;
             }
 
+            // 安装器进程链逃逸(2026-09-18 端到端实验定位):通过安装器"安装完成后启动"拉起的实例,
+            // 无论环境变量怎么清理、cwd/令牌如何,dsh 服务启动必败(整片 Cannot find package),
+            // 而同一 exe 手动启动必成 —— Windows 加载器对"安装器进程链"的标记是链级继承的,
+            // 清环境变量拦不住。唯一可靠解法:由 explorer.exe(干净链根)重新拉起自己,自己退出。
+            // 探测后旧实例先释放互斥体再退出,避免新实例走"通知已有实例"路径被误退。
+            // 循环护栏:逃逸前写标记文件;若本实例是刚被逃逸拉起的(标记还在),不再逃逸 ——
+            // 覆盖 __COMPAT_LAYER 被持久化的极端情况(否则 explorer 拉起的新实例照样非空 → 无限重启)。
+            if (IsInsideInstallerCompatChain())
+            {
+                if (!ConsumeEscapeMarker())
+                {
+                    if (TryEscapeInstallerChain())
+                    {
+                        Environment.Exit(0);
+                        return;
+                    }
+                    // 逃逸失败:继续以当前实例运行(保底旧行为),不退出
+                }
+            }
+            else
+            {
+                // 本次是干净链:上一次逃逸留下的标记已经无意义,顺手清掉 ——
+                // 否则它会让 2 分钟内"下一次安装器启动"误判为"我就是逃逸拉起的"而跳过逃逸,直接回到必败状态
+                TryDeleteEscapeMarker();
+            }
+
             _showMainWindowPipeCts = new CancellationTokenSource();
             _ = Task.Run(() => ListenForShowMainWindowRequestsAsync(_showMainWindowPipeCts.Token));
 
             // 记录应用启动标记到文件日志(%LOCALAPPDATA%\DSH Launcher\Settings\app.log)
             AppLogService.MarkSessionStart();
+
+            // 启动时把"兼容层/提权"相关的环境证据写进 app.log,便于事后比对两条启动路径的差异
+            AppLogService.Write(ChildEnvironment.DescribeInheritedVariables());
+
+            // 提权信息已由上面那行 app.log(DescribeInheritedVariables)留证,不再往面板里提示:
+            // 实测提权与兼容层变量本身都不是 dsh 失败的原因(真因是安装器进程链的链级兼容层标记;
+            // 正解见本文件顶部的“安装器进程链逃逸”逻辑)。
 
             // DSH 服务启动并检测到 Web 地址后,按“启动DSH服务后”设置自动打开
             DshService.Instance.WebUrlDetected += OnDshWebUrlDetected;
@@ -323,6 +358,218 @@ public partial class App : Application
 
         _window.Show();
         _window.Activate();
+    }
+
+    /// <summary>
+    /// 当前进程是否处于"安装器进程链"里(以 __COMPAT_LAYER 非空为信号)。
+    /// <para>
+    /// 判定依据(2026-09-18 端到端实验):安装器"安装完成后启动"拉起的实例,环境里必有非空
+    /// <c>__COMPAT_LAYER</c>(实测见过 <c>DetectorsAppHealth</c>/<c>ElevateCreateProcess</c> 两种,
+    /// 随安装器被哪个进程拉起而异),而手动启动永远为空;此类实例的 dsh 服务启动必败(链级标记,
+    /// 清环境变量无效),所以一律经 explorer.exe 逃逸重启。普通用户不会手动给本程序设
+    /// <c>__COMPAT_LAYER</c>(右键兼容性设置写入的是 HKCU\...\AppCompatFlags\Layers,不走环境变量)。
+    /// </para>
+    /// </summary>
+    private static bool IsInsideInstallerCompatChain()
+    {
+        try
+        {
+            var layer = Environment.GetEnvironmentVariable("__COMPAT_LAYER");
+            return !string.IsNullOrWhiteSpace(layer);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>逃逸标记文件路径(与 app.log 同目录)。</summary>
+    private static string EscapeMarkerPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DSH Launcher", "Settings", "installer-escape.marker");
+
+    /// <summary>
+    /// 若本实例是刚被逃逸拉起的(标记文件存在且新鲜),吃掉标记并返回 true(=不再逃逸,直接继续运行)。
+    /// <para>
+    /// 这是循环护栏:<c>__COMPAT_LAYER</c> 若被持久化(用户/软件写成 HKCU\Environment 变量),
+    /// explorer 拉起的新实例照样非空 —— 没有标记就会无限重启。标记只在逃逸前写入、
+    /// 被拉起的实例首次启动时消费一次;标记过期(超过 1 分钟)视为陈旧残留,照常允许逃逸。
+    /// </para>
+    /// </summary>
+    private bool ConsumeEscapeMarker()
+    {
+        try
+        {
+            var path = EscapeMarkerPath;
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(path);
+            File.Delete(path);
+            if (age <= TimeSpan.FromMinutes(2))
+            {
+                AppLogService.Write("[启动] 本实例是刚由安装器链逃逸拉起的(逃逸标记有效),不再二次逃逸,直接继续运行。");
+
+                // 护栏触发说明:逃逸过一次却仍带着链级标记 ⇒ __COMPAT_LAYER 很可能是**持久**环境变量,
+                // 此时 explorer 拉起的新实例同样被套层、dsh 仍会失败。只在这里往面板说一句,
+                // 免得用户看到"启动失败"却不知道去哪儿查。
+                DshService.Instance.AppendSystemLog(
+                    "环境提示:检测到链级兼容层标记,且本实例已经是逃逸后重开的,因此不再重启。"
+                    + "若 dsh 启动失败,请检查是否有软件把 __COMPAT_LAYER 写成了持久环境变量"
+                    + "(用户/系统环境变量)并清除它。");
+                return true;
+            }
+
+            AppLogService.Write("[启动] 发现陈旧的逃逸标记(已超过 2 分钟),忽略并按新逃逸处理。");
+            return false;
+        }
+        catch (Exception)
+        {
+            // 标记读写失败时按"无标记"处理:宁可逃逸一次,也不冒无限重启的风险
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 由 explorer.exe 重新拉起自己以逃逸安装器进程链。
+    /// <para>
+    /// 返回 true 表示逃逸重启已发起(调用方应退出);false 表示失败(调用方应继续运行,保底旧行为)。
+    /// 必须先释放单实例互斥体再拉起:explorer 创建新进程需要时间,若旧实例仍持有互斥体,
+    /// 新实例会走"检测到已有实例"路径被误退。explorer 自己是干净的加载器链根,
+    /// 由它创建的新实例不继承任何安装器链标记,环境也换成用户会话环境(无兼容层变量)。
+    /// </para>
+    /// </summary>
+    private bool TryEscapeInstallerChain()
+    {
+        var exe = Environment.ProcessPath;
+        AppLogService.Write("[启动] 检测到安装器进程链(__COMPAT_LAYER 非空):将由 explorer.exe 以干净环境重新拉起本程序并退出当前实例。");
+
+        // 先释放互斥体,新实例才能正常取得单实例所有权
+        try
+        {
+            _singleInstanceMutex?.ReleaseMutex();
+        }
+        catch (Exception)
+        {
+            // 释放失败也不阻断逃逸(极端情况下新实例会走通知路径退出,用户手动启动即可恢复)
+        }
+
+        try
+        {
+            _singleInstanceMutex?.Dispose();
+        }
+        catch (Exception)
+        {
+            // 忽略
+        }
+
+        _singleInstanceMutex = null;
+
+        try
+        {
+            if (string.IsNullOrEmpty(exe))
+            {
+                AppLogService.Write("[启动] 无法确定自身可执行文件路径,放弃逃逸,继续以当前实例运行。");
+                return false;
+            }
+
+            // 写逃逸标记(给拉起的新实例看,见 ConsumeEscapeMarker)
+            Directory.CreateDirectory(Path.GetDirectoryName(EscapeMarkerPath)!);
+            File.WriteAllText(EscapeMarkerPath, DateTime.UtcNow.ToString("O"));
+
+            // explorer.exe 会把参数当作要打开的对象,对 exe 即是"启动该程序",
+            // 新进程的父进程是 explorer(不在安装器链里)。
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{exe}\"") { UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            // 逃逸失败不阻断当前实例:继续运行,启动 dsh 时最多重试失败(旧行为)。
+            // 但必须收尾两件事,否则"逃逸失败"会留下比原状更糟的状态:
+            // ① 清掉刚写的标记 —— 否则 2 分钟内的下一次启动会误判"我是逃逸拉起的"而跳过逃逸;
+            // ② 把单实例互斥体重新拿回来 —— 上面已经 Release/Dispose 过了,不拿回来本实例就成了"没有锁的实例",
+            //    之后任何一次启动都会成功创建第二个实例(两个托盘图标、各自都能起 dsh)。
+            AppLogService.Write($"[启动] 逃逸重启失败,继续以当前实例运行:{ex.Message}");
+            TryDeleteEscapeMarker();
+            TryReacquireSingleInstanceMutex();
+            return false;
+        }
+    }
+
+    /// <summary>删除逃逸标记(不存在或删除失败都不影响流程)。</summary>
+    private static void TryDeleteEscapeMarker()
+    {
+        try
+        {
+            var path = EscapeMarkerPath;
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                AppLogService.Write("[启动] 已清理逃逸标记。");
+            }
+        }
+        catch (Exception)
+        {
+            // 标记清理失败不影响流程(它 2 分钟后会自动失效)
+        }
+    }
+
+    /// <summary>
+    /// 逃逸失败后的收尾:把单实例互斥体重新拿回来,避免本实例变成"没有锁的实例"。
+    /// 拿不回来只记日志(极端情况下用户会看到两个实例,退出一个即可)。
+    /// </summary>
+    private void TryReacquireSingleInstanceMutex()
+    {
+        try
+        {
+            _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
+            AppLogService.Write(createdNew
+                ? "[启动] 已重新取得单实例所有权。"
+                : "[启动] 单实例互斥体已被别的实例占用(本次未取回)。");
+        }
+        catch (Exception ex)
+        {
+            AppLogService.Write($"[启动] 重新取得单实例所有权失败:{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 在"已有实例正在退出"的短暂窗口里再争取一次单实例所有权。
+    /// <para>
+    /// 为什么需要:安装器链逃逸时旧实例要先 <c>ReleaseMutex</c> 再让 explorer 拉起新实例,
+    /// 两个动作之间有几百毫秒;若这期间有别的实例抢先拿到互斥体,逃逸出来的实例会走
+    /// "通知已有实例并退出"这条路 —— 用户看到的就是"点了没反应"。
+    /// 命中被遗弃的互斥体(<c>AbandonedMutexException</c>)算作"已获得",等于接管它。
+    /// </para>
+    /// </summary>
+    private bool TryAcquireSingleInstanceMutex()
+    {
+        for (var i = 0; i < 6; i++)
+        {
+            Thread.Sleep(250);
+            try
+            {
+                if (_singleInstanceMutex?.WaitOne(0) == true)
+                {
+                    AppLogService.Write($"[启动] 等待 {(i + 1) * 250} 毫秒后取得单实例所有权(上一个实例正在退出)");
+                    return true;
+                }
+            }
+            catch (AbandonedMutexException)
+            {
+                // 上一个实例没来得及释放就退出了:这个异常本身表示所有权已归本进程
+                AppLogService.Write("[启动] 接管了被遗弃的单实例互斥体");
+                return true;
+            }
+            catch (Exception)
+            {
+                // 其它异常按"未取得"继续重试
+            }
+        }
+
+        return false;
     }
 
     private void ExitApplication()

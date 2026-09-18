@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Principal;
 using System.Text.RegularExpressions;
 
 namespace DSH_Launcher.Services
@@ -170,6 +171,65 @@ namespace DSH_Launcher.Services
                     psi.Environment[name] = noProxy;
                 }
             }
+        }
+
+        /// <summary>
+        /// 兼容层变量名(<c>__COMPAT_LAYER</c>)。
+        /// <para>
+        /// 实测(2026-09-18):安装器“安装完成后启动”的进程链里该变量非空(见过
+        /// <c>DetectorsAppHealth</c>/<c>ElevateCreateProcess</c>);真正致败的是 Windows 在
+        /// **加载器层随链继承的 AppCompat shim 本体** —— 它让 dsh 对 profile 依赖的 junction
+        /// 大面积不可达(<c>Cannot find package</c>),而环境变量只是它的影子。
+        /// ⚠ 所以“清子进程环境变量”无效,该清理已删除。
+        /// </para>
+        /// <para>现在它只用于两件事:启动时写 app.log 留证,以及作为 App.axaml.cs 里“逃逸安装器链”的触发信号。</para>
+        /// </summary>
+        public const string CompatibilityLayerVariable = "__COMPAT_LAYER";
+
+        /// <summary>提权文件复制标记变量的前缀(仅用于启动时统计个数留证)。</summary>
+        private const string EfcVariablePrefix = "EFC_";
+
+        /// <summary>
+        /// 当前进程是否以管理员权限运行(非 Windows 恒为 false),仅用于启动时写 app.log 留证。
+        /// <para>
+        /// ⚠ 提权**不是**"安装器启动时 dsh 起不来"的原因(已实测排除);真因是安装器进程链的
+        /// 链级兼容层标记,见 <see cref="CompatibilityLayerVariable"/> 与 App.axaml.cs 的逃逸逻辑。
+        /// </para>
+        /// </summary>
+        public static bool IsElevated()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
+            try
+            {
+                using var identity = WindowsIdentity.GetCurrent();
+                return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 当前进程环境里是否有"安装器/提权残留"变量(诊断用,启动时写入 app.log)。
+        /// 判断依据:是否提权、<c>__COMPAT_LAYER</c> 的值、<c>EFC_*</c> 的个数。
+        /// </summary>
+        public static string DescribeInheritedVariables()
+        {
+            var layer = Environment.GetEnvironmentVariable(CompatibilityLayerVariable);
+            var layerText = string.IsNullOrEmpty(layer) ? "(空值,兼容层未生效)" : $"={layer}";
+
+            var efc = Environment.GetEnvironmentVariables().Keys
+                .OfType<string>()
+                .Count(key => key.StartsWith(EfcVariablePrefix, StringComparison.OrdinalIgnoreCase));
+
+            return $"环境:{(IsElevated() ? "管理员权限" : "普通权限")};"
+                + $"{CompatibilityLayerVariable}{layerText};{efc} 个 EFC_* 变量"
+                + (string.IsNullOrEmpty(layer) ? string.Empty : "(链级兼容层:启动时会逃逸出安装器链重开自己)");
         }
 
         /// <summary>

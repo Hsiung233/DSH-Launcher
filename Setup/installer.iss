@@ -70,7 +70,15 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; ⚠ 不要改回默认写法(Setup 直接 CreateProcess 拉起应用):安装器进程链上的**链级兼容层标记**会被继承到
+; 应用及其子进程,导致 dsh 解析不到 profile 依赖(整片 "Cannot find package '@deepseek-ai/*'")、
+; 退出码 1 —— 这就是"安装完成后首次运行 dsh 必败、手动启动就好"的根因(2026-09-18 端到端实验闭环)。
+; 改为经 explorer 启动:命令由**已在运行的 Explorer** 接管创建进程,父进程是 explorer、链根干净。
+; 这与应用自身那条"安装器链逃逸"用的是同一机制,已实测新实例 __COMPAT_LAYER 为空、EFC_* 为 0。
+; 注意:这里**不要**换成 shellexec —— ShellExecuteEx 通常在 Setup 进程内创建子进程(父进程仍是 Setup),
+; 断不了链;而应用中保留了逃逸逻辑作为兜底(如"以管理员身份运行 Setup"等场景)。
+; ⚠ 路径必须用 {win}(= C:\Windows\explorer.exe):explorer.exe **不在 System32 下**,写 {sys} 会在运行时找不到文件。
+Filename: "{win}\explorer.exe"; Parameters: """{app}\{#MyAppExeName}"""; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; 用户数据**不在这里删**:卸载时由 [Code] 的 CurUninstallStepChanged 弹框让用户选择是否清理

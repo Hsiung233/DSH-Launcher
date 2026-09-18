@@ -66,6 +66,16 @@ namespace DSH_Launcher.Views
 
         private bool _copyFeedbackBusy;
 
+        /// <summary>
+        /// 输出浮窗正文的刷新间隔。理由同首页:<c>pnpm</c>/<c>dsh</c> 输出一秒可能几百行,
+        /// 而面板是"整段文本塞进 SelectableTextBlock + Wrap",逐行改 Text 会让整段文本反复
+        /// 重新塑形/排版,输出一刷屏 UI 线程就被钉死(窗口"未响应")。
+        /// </summary>
+        private static readonly TimeSpan PluginLogRefreshInterval = TimeSpan.FromMilliseconds(200);
+
+        /// <summary>已登记一次待执行的浮窗刷新(节流:同一时间窗内多次追加只刷一次)。</summary>
+        private bool _pluginLogRefreshPending;
+
         public PluginsPageControl()
         {
             InitializeComponent();
@@ -769,15 +779,34 @@ namespace DSH_Launcher.Views
 
         private void OnPluginLogAppended(string text) => Dispatcher.UIThread.Post(() =>
         {
-            this.PluginLogTextBlock.Text = (this.PluginLogTextBlock.Text ?? string.Empty) + text;
-            this.PluginLogScroll.ScrollToEnd();
-
-            // 浮窗关着时不给用户看日志,就在浮动按钮上亮一个圆点提示有新输出
+            // 浮窗关着时不给用户看日志,就在浮动按钮上亮一个圆点提示有新输出。
+            // 这步很轻,不必等节流 —— 亮了圆点用户才知道有输出。
             if (!this.PluginLogFlyout.IsVisible)
             {
                 this.PluginLogUnreadDot.IsVisible = true;
             }
+
+            // 正文刷新走节流(见 PluginLogRefreshInterval),内容从服务侧现取
+            if (this._pluginLogRefreshPending)
+            {
+                return;
+            }
+
+            this._pluginLogRefreshPending = true;
+            DispatcherTimer.RunOnce(this.OnPluginLogRefreshTick, PluginLogRefreshInterval, DispatcherPriority.Background);
         });
+
+        private void OnPluginLogRefreshTick()
+        {
+            this._pluginLogRefreshPending = false;
+            this.PluginLogTextBlock.Text = this._plugins.LogText;
+
+            // 浮窗关着时滚动没有意义(也没得看)
+            if (this.PluginLogFlyout.IsVisible)
+            {
+                this.PluginLogScroll.ScrollToEnd();
+            }
+        }
 
         private void OnPluginLogsCleared() => Dispatcher.UIThread.Post(() => this.PluginLogTextBlock.Text = string.Empty);
 
