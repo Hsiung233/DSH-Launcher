@@ -31,6 +31,11 @@ user-invocable: true
 - **单实例**：再启动一个实例 = 唤起已有实例的主界面（主界面默认隐藏到托盘，`ShowMainWindowOnStartup=false`）。
 - **改设置后需重启应用**才生效（设置只在启动时加载；除 `WebOpener` 的超时是每次现读）。
 - 构建前先 `Stop-Process -Name "DSH Launcher"`，否则 exe 被占用会报 `MSB3027`。
+- ⚠⚠ **先看清你要结束的是哪一个实例**：如果**当前会话本身**就是启动器拉起来的（典型情形：经由启动器的 WebView 与
+  编码助手对话，`dsh web` 是启动器的子进程），`Stop-Process -Name "DSH Launcher"` 会连同会话一起杀掉
+  —— 本轮对话会被打断，得由用户手动重开。动手前先 `Get-Process -Name "DSH Launcher" | Select-Object Id, Path` 看
+  `Path` 是不是你正要替换的那个产物；用户自己装着的那一份（`%LOCALAPPDATA%\Programs\DSHLauncher`）
+  与仓库 `bin\` 下的调试产物是两回事，**构建不需要结束它**。
 
 ## 步骤
 
@@ -294,15 +299,31 @@ Get-Content "$env:LOCALAPPDATA\DSH Launcher\Settings\app.log" -Tail 8
 | `SettingsScroll` | Pane（**判断"当前在设置页"用它**） |
 | `ShowMainWindowOnStartupSwitch` | Button（ToggleSwitch） |
 | `RunDshServiceOnStartupSwitch` | Button（ToggleSwitch） |
+| `AutoStartSwitch` | Button（ToggleSwitch，**开机自启动**；以 `dotnet` 主机启动时 `IsEnabled=false`） |
 | `KeepWebViewAliveSwitch` | Button（ToggleSwitch） |
 | `AfterDshServiceStartedCombo` | ComboBox |
 | `TraySingleClickCombo` / `TrayDoubleClickCombo` | ComboBox |
 | `WebViewLinkCombo` | ComboBox |
 | `WebViewIdleTimeoutBox` | Spinner |
+| `AutoStartStateText` | Text（开机自启动那一行下方：**系统侧真实状态**，`HelpText` = 自启动项位置与内容） |
 | `NpmRegistryCombo` | ComboBox（**环境**卡片） |
 | `NpmRegistryUrlText` | Text（**环境**卡片） |
 | `ProxyUrlBox` / `NoProxyBox` | Edit（**环境**卡片） |
 
+> **设置页的「开机自启动」行（2026-09-19 新增）**
+>
+> - 开关 `AutoStartSwitch` 回填的是**设置**（`settings.json` 的 `AutoStartOnLogon`，默认 false），
+>   而它下面那行 `AutoStartStateText` 读的是**系统侧**（`AutoStartService.Read()`）—— 两者不一致时提示里会写明。
+> - **验收必须看真实注册表，不能只看开关**：
+>   ```powershell
+>   reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\Run' /v 'DSH Launcher'
+>   # 开启后应是 REG_SZ: "<exe 完整路径>" --autostart（路径含空格，带引号）
+>   # 关闭后应是「找不到」；顺带确认 settings.json 里 AutoStartOnLogon 同步为 true/false
+>   ```
+> - 开→关→再开 一轮，确认 `app.log` 有 `[启动] 开机自启动 = 已开启(...)` / `= 已关闭,已清除系统自启动项`，
+>   且**没有**重复的注册表写入（`Reconcile` 只在确有差异时才写）。
+> - 以 `dotnet run` 启动时那一行是**禁用**的（拿不到程序本体路径），别把它当成 bug。
+>
 > **设置页的「环境」卡片（npm 源 / 代理，2026-09-17 新增）**
 >
 > - `NpmRegistryCombo` 5 个静态项，**顺序 = 枚举值**：`使用配置源`(0) / `npm 官方`(1) / `npmmirror(淘宝)`(2) /

@@ -132,6 +132,17 @@ namespace DSH_Launcher.Models
         /// <summary>应用启动时自动运行 DSH 服务(仅在已安装时生效),默认关闭。</summary>
         public bool RunDshServiceOnStartup { get; set; }
 
+        /// <summary>
+        /// 登录系统后自动启动启动器(开机自启动),默认关闭。
+        /// <para>
+        /// 这是**用户意图**,系统侧的注册项才是实际生效的东西;两者的一致性由
+        /// <c>AutoStartService.Reconcile</c> 在每次启动时对齐(设置开着但注册项被删/指向旧路径会补写,
+        /// 设置关着但注册项残留会清除)。属性名带 OnLogon 是因为 Windows 的 Run 项与 macOS 的
+        /// LaunchAgent 都在**登录**时触发,而不是开机时。
+        /// </para>
+        /// </summary>
+        public bool AutoStartOnLogon { get; set; }
+
         /// <summary>DSH 服务启动并检测到 Web 地址后的动作(设置页仅提供 None/WebView/Browser),默认无动作。</summary>
         [JsonConverter(typeof(LenientEnumConverter<WebOpenAction>))]
         public WebOpenAction AfterDshServiceStarted { get; set; } = WebOpenAction.None;

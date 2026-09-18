@@ -67,6 +67,7 @@ public sealed class SettingsJsonTests
         Assert.AreEqual(WebOpenAction.MainWindow, settings.RepeatLaunchAction);   // 与加入本设置之前的行为一致
         Assert.IsTrue(settings.ShowMainWindowOnStartup);
         Assert.IsFalse(settings.RunDshServiceOnStartup);
+        Assert.IsFalse(settings.AutoStartOnLogon);   // 开机自启动默认关闭
         Assert.AreEqual(0, settings.ListenPort);
         Assert.IsTrue(settings.KeepWebViewAlive);
         Assert.AreEqual(PluginCatalogSource.Official, settings.PluginCatalog);
@@ -89,6 +90,7 @@ public sealed class SettingsJsonTests
             TraySingleClick = WebOpenAction.MainWindow,
             TrayDoubleClick = WebOpenAction.None,
             RunDshServiceOnStartup = true,
+            AutoStartOnLogon = true,
             AfterDshServiceStarted = WebOpenAction.Browser,
             RepeatLaunchAction = WebOpenAction.None,
             ShowMainWindowOnStartup = false,
@@ -108,6 +110,7 @@ public sealed class SettingsJsonTests
         Assert.AreEqual(original.TraySingleClick, restored.TraySingleClick);
         Assert.AreEqual(original.TrayDoubleClick, restored.TrayDoubleClick);
         Assert.AreEqual(original.RunDshServiceOnStartup, restored.RunDshServiceOnStartup);
+        Assert.AreEqual(original.AutoStartOnLogon, restored.AutoStartOnLogon);
         Assert.AreEqual(original.AfterDshServiceStarted, restored.AfterDshServiceStarted);
         Assert.AreEqual(original.RepeatLaunchAction, restored.RepeatLaunchAction);
         Assert.AreEqual(original.ShowMainWindowOnStartup, restored.ShowMainWindowOnStartup);

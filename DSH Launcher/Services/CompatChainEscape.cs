@@ -41,6 +41,18 @@ namespace DSH_Launcher.Services
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "DSH Launcher", "Settings", "installer-escape.marker");
 
+        /// <summary>
+        /// 标记文件第二行的字面量,表示"触发逃逸的那次启动是自启动拉起的"。
+        /// <para>
+        /// ⚠ 逃逸重启经 explorer.exe,**不能带命令行参数**(explorer 会把多余参数当"要打开的对象")。
+        /// 但自启动语义不能因此丢掉 —— 否则"持久 <c>__COMPAT_LAYER</c> 环境 + 自启动"的组合下,
+        /// 逃逸后的新实例会按 <c>ShowMainWindowOnStartup</c> 弹主界面,违背自启动"静默进托盘"的意图。
+        /// 于是把标记写进标记文件(它本来就是写给新实例看的),新实例消费标记时接回
+        /// <see cref="StartupArguments.MarkAutoStartLaunch"/>。
+        /// </para>
+        /// </summary>
+        private const string AutoStartMarkerLine = "autostart";
+
         /// <summary>标记有效期:超过它的残留视为陈旧(照常允许逃逸)。</summary>
         private static readonly TimeSpan MarkerLifetime = TimeSpan.FromMinutes(2);
 
@@ -87,8 +99,16 @@ namespace DSH_Launcher.Services
                     return EscapeMarkerState.None;
                 }
 
+                var content = File.ReadAllText(path);
                 var age = DateTime.UtcNow - File.GetLastWriteTimeUtc(path);
                 File.Delete(path);
+
+                // 逃逸前若是自启动拉起,把语义接过来(即使本实例走护栏不再逃逸也要接 —— 它就是"逃逸后重开的实例")
+                if (content.Contains(AutoStartMarkerLine, StringComparison.Ordinal))
+                {
+                    StartupArguments.MarkAutoStartLaunch();
+                    AppLogService.Write("[启动] 逃逸前是自启动拉起,重启后维持自启动行为(不弹主界面)。");
+                }
 
                 if (age <= MarkerLifetime)
                 {
@@ -103,6 +123,24 @@ namespace DSH_Launcher.Services
             {
                 // 标记读写失败时按"无标记"处理:宁可逃逸一次,也不冒无限重启的风险
                 return EscapeMarkerState.None;
+            }
+        }
+
+        /// <summary>
+        /// 标记文件里是否带着"逃逸前是自启动"的字面量(不消费、不删除文件本体)。
+        /// 给**干净链**路径用:那里不调 <see cref="ConsumeMarker"/>(护栏只对链内实例有意义),
+        /// 但也要在删掉陈旧标记前把自启动语义接过来。
+        /// </summary>
+        public static bool MarkerCarriesAutoStartFlag()
+        {
+            try
+            {
+                return File.Exists(MarkerPath)
+                    && File.ReadAllText(MarkerPath).Contains(AutoStartMarkerLine, StringComparison.Ordinal);
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 
@@ -129,9 +167,10 @@ namespace DSH_Launcher.Services
         /// 由它创建的新实例不继承任何链标记,环境也换成用户会话环境(无兼容层变量)。
         /// </para>
         /// <para>
-        /// 已知取舍(有意为之,不要当 bug 修):重启**不带命令行参数**,explorer 只把第一个参数当"要打开的对象"。
-        /// 目前应用不解析参数(<c>Program.cs</c> 仅把 args 转交给 Avalonia 生命周期),所以无实际影响;
-        /// 若将来需要靠参数驱动启动行为,必须同步改这里(例如改为经临时快捷方式/自己拼 ShellExecuteEx 传递)。
+        /// 已知取舍(有意为之,不要当 bug 修):重启经 explorer **不能带命令行参数**(explorer 会把多余参数
+        /// 当"要打开的对象")。命令行参数因此会丢 —— 目前唯一依赖参数的"自启动"语义,
+        /// 靠把标记写进逃逸标记文件来承载(见 <see cref="AutoStartMarkerLine"/>),新实例消费标记时接回。
+        /// 将来若引入其它必须经命令行传递的启动行为,得另想办法(临时快捷方式/自拼 ShellExecuteEx)。
         /// 工作目录会变成 exe 所在目录 —— 与"手动双击启动"一致,比继承上游 cwd 更可预测。
         /// </para>
         /// </summary>
@@ -151,9 +190,13 @@ namespace DSH_Launcher.Services
                     return false;
                 }
 
-                // 写逃逸标记(给拉起的新实例看,见 ConsumeMarker)
+                // 写逃逸标记(给拉起的新实例看,见 ConsumeMarker);
+                // 本次是自启动拉起时把该语义一并写进去,explorer 重启丢不掉它。
                 Directory.CreateDirectory(Path.GetDirectoryName(MarkerPath)!);
-                File.WriteAllText(MarkerPath, DateTime.UtcNow.ToString("O"));
+                File.WriteAllText(
+                    MarkerPath,
+                    DateTime.UtcNow.ToString("O")
+                    + (StartupArguments.IsAutoStartLaunch ? $"\n{AutoStartMarkerLine}" : string.Empty));
 
                 // explorer.exe 会把参数当作要打开的对象,对 exe 即是"启动该程序",
                 // 新进程的父进程是 explorer(不在上游进程链里)。

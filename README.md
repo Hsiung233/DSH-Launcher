@@ -17,6 +17,20 @@
 - **进程树清理**：停止时连同子进程一起终止（Windows 用 Job Object，其他平台用 `Kill(entireProcessTree)`），应用退出/系统关机时也会兜底停止服务。
 - **实时日志**：`dsh web` 的标准输出实时显示在首页日志卡片中，支持复制、清空、在文件管理器中定位日志文件。
 
+### 开机自启动
+默认**关闭**，在设置页「服务」卡片里开启：开启后把启动器写进系统自启动项（**当前用户**级，不需要管理员权限），
+下次登录系统时自动拉起，并**直接收进系统托盘**（不弹主界面 —— 登录就弹窗是自启动最容易被关掉的原因），
+服务再按「启动时运行 DSH 服务」照常启动。由系统拉起的这次启动会带 `--autostart` 标记，app.log 里据此可分辨。
+
+- **落点**：Windows 是注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下名为 `DSH Launcher` 的字符串值；
+  macOS 是 `~/Library/LaunchAgents/com.dsh-launcher.autostart.plist`；Linux 是 `~/.config/autostart/dsh-launcher.desktop`。
+  写进去的是**带引号的当前程序路径** + `--autostart`，所以安装路径含空格也没问题。
+- **自愈**：每次启动都会把系统侧与设置对齐 —— 程序换了安装目录（注册项指向旧路径）会更新、注册项被手工删掉会补写、
+  设置关着却还残留着旧注册项会清除（`AutoStartService.Reconcile`）。只在**确有差异**时才写系统，
+  不会每次启动都重写注册表。
+- 设置页那一行下方显示的是**系统侧的真实状态**（已注册 / 未注册 / 指向其它路径），鼠标悬停可看到自启动项的完整位置与内容。
+- 写入失败（组策略、安全软件拦截）时开关会退回原状，并把原因写在状态行里，不会出现「设置开着而系统里其实没有」。
+
 ### 环境信息
 首页可展开的面板，展示运行状态（PID / 启动时刻）、应用版本、已安装版本、Node.js 与 npm 版本、`dsh` 可执行文件路径、WebView 引擎版本。
 
@@ -59,7 +73,7 @@ WinUI 卡片式设置页，分四组：
 
 | 卡片 | 设置项 |
 |---|---|
-| **服务** | 启动时自动运行服务、服务就绪后的动作、重复启动时的动作、关闭主窗口时隐藏到托盘、监听端口 |
+| **服务** | 开机自启动、启动时打开主界面、启动时自动运行服务、服务就绪后的动作、重复启动时的动作 |
 | **系统托盘** | 单击动作、双击动作 |
 | **WebView** | 应用内链接打开方式（系统浏览器 / 应用内）、关闭时保留窗口、保留超时（分钟） |
 | **环境** | npm 源（使用配置源 / 官方 / npmmirror / 腾讯云 / 华为云）、HTTP 代理、不走代理的地址 |
@@ -95,7 +109,7 @@ WinUI 卡片式设置页，分四组：
 - **纯逻辑与界面分离到可测**：插件目录的加载状态机（缓存命中/同地址去重/世代号防"慢的旧来源覆盖新来源"）是 `CatalogLoadController`，启动失败诊断是 `StartFailureDiagnostics`，两者都不依赖界面。
 - **状态挂数据对象、不挂控件**：列表是虚拟化的（容器会回收复用），所以"勾选""待确认卸载"这类状态存在 `PluginEntry` 上，而不是写在 `Button.Content` 里。
 - **命名空间与文件夹一致**：`Services/Plugins/*` → `DSH_Launcher.Services.Plugins`，`Views/Shared/*` → `DSH_Launcher.Views.Shared`。
-- **纯逻辑有单元测试兜底**（`DSH Launcher.Tests`，见下文）：版本比较、日志裁剪、`cordis.patch.yml` 读写、两份插件目录的解析、`--dump-config` 解析、目录加载时序、编码判定、设置 JSON 的宽容枚举解析等。
+- **纯逻辑有单元测试兜底**（`DSH Launcher.Tests`，见下文）：版本比较、日志裁剪、`cordis.patch.yml` 读写、两份插件目录的解析、`--dump-config` 解析、目录加载时序、编码判定、设置 JSON 的宽容枚举解析、自启动项的格式与对齐决策表等。
 
 ---
 
@@ -110,6 +124,8 @@ dotnet run --project "DSH Launcher/DSH Launcher.csproj"
 ```
 
 > 构建前建议先结束正在运行的实例（`Stop-Process -Name "DSH Launcher"`），否则输出程序集可能被占用。
+> ⚠ 但如果你的**当前工作会话**（例如 `dsh web` + 浏览器/WebView）正是这个启动器拉起来的，结束它会连带结束那个会话 ——
+> 这种情况请先确认会话可以从别处恢复，或改用另一个构建输出目录。
 
 发行版另附 `Properties/PublishProfiles/DSH Launcher_Windows_x64.pubxml` 发布配置。
 
@@ -119,7 +135,7 @@ dotnet run --project "DSH Launcher/DSH Launcher.csproj"
 dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 ```
 
-测试项目覆盖的是**不依赖界面的纯逻辑**：版本比较、日志限长与裁剪、`cordis.patch.yml` 托管区块读写、两份社区目录的解析与筛选排序、**目录加载的并发时序**（慢的旧来源不得覆盖新来源、缓存命中要顶掉在飞请求）、`dsh --dump-config` 输出解析、子进程输出编码判定、设置 JSON 与宽容枚举解析、插件条目的界面状态、启动失败提示。这些都是注释里写满"实测踩过的坑"的地方，也正是重构中最容易被静默改坏的地方。
+测试项目覆盖的是**不依赖界面的纯逻辑**：版本比较、日志限长与裁剪、`cordis.patch.yml` 托管区块读写、两份社区目录的解析与筛选排序、**目录加载的并发时序**（慢的旧来源不得覆盖新来源、缓存命中要顶掉在飞请求）、`dsh --dump-config` 输出解析、子进程输出编码判定、设置 JSON 与宽容枚举解析、插件条目的界面状态、启动失败提示、开机自启动项的格式（Windows Run 命令行的引号与反解析、plist / .desktop 正文、XML 转义）、`--autostart` 标记识别、自启动对齐决策表与状态提示文案。这些都是注释里写满"实测踩过的坑"的地方，也正是重构中最容易被静默改坏的地方。
 
 > 若本机访问不到 nuget.org，测试包（MSTest）可从 Visual Studio 自带的离线包源还原：
 > ```powershell
@@ -170,6 +186,9 @@ dotnet publish "DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launche
 （设置、日志、窗口状态记忆、WebView2 缓存），选「否」（默认按钮）保留，重新安装后可继续使用原设置。
 静默卸载（`/SILENT`、`/VERYSILENT`）不弹框、默认保留；要强制清理加 `/CLEANDATA`，强制保留加 `/KEEPDATA`。
 
+开机自启动项**无条件**清理（与「是否清理用户数据」无关）：程序文件都删了，注册项还留着的话，
+每次登录 Windows 都会尝试启动一个不存在的 exe。
+
 ---
 
 ## 目录结构
@@ -207,6 +226,9 @@ DSH Launcher/
       PluginPatchFile.cs          cordis.patch.yml 托管区块的读写（格式知识集中在此）
       PluginCatalogReader.cs      两份社区目录 JSON 的解析归一
     SettingsService.cs            设置模型与 JSON 持久化（含宽容枚举解析）
+    AutoStartService.cs           开机自启动：读写系统自启动项 + 启动时与设置对齐（Windows Run / LaunchAgent / XDG）
+    AutoStartEntry.cs             自启动项的落点与格式（纯字符串拼装，被单元测试覆盖）
+    StartupArguments.cs           `--autostart` 标记：系统拉起的这一次不再弹主界面
     ChildEnvironment.cs           npm 源 / 代理注入子进程与 HttpClient
     PlatformProcess.cs            跨平台进程启动、命令定位、路径与输出解码
     WebOpener.cs                  WebView 窗口管理、引擎探测（窗口复用/空闲释放）
@@ -230,6 +252,7 @@ DSH Launcher.Tests/               单元测试（MSTest，覆盖上表中的纯�
   FailureAnalysisTests.cs         启动失败提示
   CatalogLoadControllerTests.cs   目录加载时序（慢的旧来源/缓存命中顶掉在飞请求）
   PluginEntryTests.cs             插件条目的界面状态（勾选、待确认卸载）
+  AutoStartTests.cs               自启动项格式、`--autostart` 标记、对齐决策表与状态提示文案
 
 Publish-App.ps1                   发布到 bin/Publish 的脚本（清空旧产物、结束运行中的实例）
 Build-Installer.ps1               先调 Publish-App.ps1 发布，再用 Inno Setup 编译安装包
@@ -254,6 +277,14 @@ docs/screenshots/                 README 中使用的界面截图
 
 被管理的 dsh profile 位于 `~/.dsh/profiles/web`，插件启停通过改写该目录下的 `cordis.patch.yml` 实现。
 
+系统自启动项（**开启「开机自启动」后才会存在**，关闭即删除）：
+
+| 平台 | 位置 |
+|---|---|
+| Windows | 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 下名为 `DSH Launcher` 的字符串值 |
+| macOS | `~/Library/LaunchAgents/com.dsh-launcher.autostart.plist`（Label `com.dsh-launcher.autostart`，RunAtLoad） |
+| Linux | `~/.config/autostart/dsh-launcher.desktop`（XDG autostart） |
+
 ---
 
 ## 已知限制
@@ -262,6 +293,10 @@ docs/screenshots/                 README 中使用的界面截图
 - **监听地址固定为 `127.0.0.1`**：`dsh web` 的 `--host` 实际被上游硬拦截（仅接受 `127.0.0.1` / `0.0.0.0`，且 `0.0.0.0` 被启动脚本以安全理由拒绝），因此启动器不提供监听地址配置。
 - **插件启停非官方 API**：`dsh` 目前没有插件启停的官方接口，启动器是通过写 `cordis.patch.yml` 实现的，属自行实现（写入区域有注释标记包裹）。
 - **pnpm 依赖**：安装/卸载插件需要可用的 `pnpm`。界面会探测并在未就绪时给出提示（启用/禁用不依赖 pnpm）。
+- **开机自启动的落点只在 Windows 上实测过**（注册表写入/删除、旧路径自愈、残留清理都由真实注册表验证）；
+  macOS 的 LaunchAgent 与 Linux 的 XDG `.desktop` 是照各自规范实现的，尚未在真机验证。
+  另外，以 `dotnet run`（`dotnet` 主机）启动时拿不到程序本体路径，此时这一项会直接禁用并说明原因 ——
+  注册一个指向 `dotnet.exe` 的自启动项毫无意义。
 
 ---
 

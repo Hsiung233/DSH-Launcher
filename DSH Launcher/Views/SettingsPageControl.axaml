@@ -63,6 +63,23 @@
 
                     <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Classes="rowTitle" Text="开机自启动"/>
+                            <TextBlock Classes="rowDesc" Text="登录系统后自动启动启动器(按当前用户写入系统自启动项,不需要管理员权限);这样启动时不弹主界面,直接收进系统托盘"/>
+                            <TextBlock x:Name="AutoStartStateText"
+                                       Classes="rowDesc"
+                                       Margin="0 2 0 0"
+                                       Text="系统自启动项:未注册"/>
+                        </StackPanel>
+                        <ToggleSwitch x:Name="AutoStartSwitch"
+                                      Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      IsCheckedChanged="OnAutoStartChanged"/>
+                    </Grid>
+
+                    <Border Classes="rowSeparator"/>
+
+                    <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                             <TextBlock Classes="rowTitle" Text="启动时打开主界面"/>
                             <TextBlock Classes="rowDesc" Text="应用启动后直接显示主窗口;关闭时收进系统托盘"/>
                         </StackPanel>

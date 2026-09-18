@@ -38,6 +38,11 @@ namespace DSH_Launcher.Views
                 this.RunDshServiceOnStartupSwitch.IsChecked = settings.RunDshServiceOnStartup;
                 this.ShowMainWindowOnStartupSwitch.IsChecked = settings.ShowMainWindowOnStartup;
 
+                // 开关回填的是**设置**(用户意图);下面那行提示读的是**系统侧**(实际注册项),
+                // 两者不一致时正好在界面上暴露出来(见 UpdateAutoStartHint)
+                this.AutoStartSwitch.IsChecked = settings.AutoStartOnLogon;
+                this.UpdateAutoStartHint();
+
                 // 该下拉框的界面顺序与枚举值顺序不同,经 RepeatLaunchOptions 显式转换(见其注释)
                 this.RepeatLaunchCombo.SelectedIndex = RepeatLaunchOptions.ToIndex(settings.RepeatLaunchAction);
 
@@ -191,6 +196,80 @@ namespace DSH_Launcher.Views
 
             SettingsService.Instance.Update(
                 s => s.ShowMainWindowOnStartup = this.ShowMainWindowOnStartupSwitch.IsChecked == true);
+        }
+
+        /// <summary>
+        /// “开机自启动”开关:**先写系统自启动项,成功了才写设置**。
+        /// <para>
+        /// 顺序不能反 —— 系统侧写失败(组策略 / 安全软件 / 权限)时必须把开关退回原状,
+        /// 否则设置里写着“已开启”而系统里其实没有,用户要等到下次登录才发现自启动没生效。
+        /// </para>
+        /// <para>
+        /// ⚠ 同样要挡住 <see cref="_pageReady"/> 之前的事件(与“重复启动应用时”那两处同一理由):
+        /// 这一项被当成用户操作误写过一次的后果最重 —— 它会把设置改成“关闭”,进而注销掉自启动。
+        /// </para>
+        /// </summary>
+        private void OnAutoStartChanged(object? sender, RoutedEventArgs e)
+        {
+            if (!this._pageReady || this._initializing)
+            {
+                return;
+            }
+
+            var enabled = this.AutoStartSwitch.IsChecked == true;
+            if (SettingsService.Instance.Settings.AutoStartOnLogon == enabled)
+            {
+                return;
+            }
+
+            if (!AutoStartService.Instance.TrySet(enabled, out var failure))
+            {
+                this.RevertAutoStartSwitch(!enabled);
+                this.UpdateAutoStartHint($"设置失败:{failure}");
+                DshService.Instance.AppendSystemLog($"[启动] 开机自启动{(enabled ? "开启" : "关闭")}失败:{failure}");
+                return;
+            }
+
+            SettingsService.Instance.Update(s => s.AutoStartOnLogon = enabled);
+            this.UpdateAutoStartHint();
+            DshService.Instance.AppendSystemLog(enabled
+                ? $"[启动] 开机自启动 = 已开启({AutoStartService.Instance.DescribeRegistration()})"
+                : "[启动] 开机自启动 = 已关闭,已清除系统自启动项");
+        }
+
+        /// <summary>
+        /// 刷新“开机自启动”行下方的状态提示。读的是**系统侧**(注册表 / 自启动文件)而不是设置:
+        /// 这样“设置开着但系统里没有(被手工删过或写入失败)”这种不一致在界面上一眼可见。
+        /// </summary>
+        /// <param name="failure">写入失败时要顶掉状态行的原因文案(null = 展示系统侧状态)。</param>
+        private void UpdateAutoStartHint(string? failure = null)
+        {
+            var status = AutoStartService.Instance.Read();
+
+            // 当前运行方式(如 dotnet 主机)根本注册不了:开关直接禁用,免得用户拨了没反应
+            this.AutoStartSwitch.IsEnabled = status.State != AutoStartState.Unsupported;
+            this.AutoStartStateText.Text = failure
+                ?? AutoStartService.DescribeHint(status, SettingsService.Instance.Settings.AutoStartOnLogon);
+
+            // tooltip 给出自启动项的完整位置与内容(排查“自启动没生效”时最直接的证据)
+            ToolTip.SetTip(this.AutoStartStateText, AutoStartService.Instance.DescribeRegistration());
+        }
+
+        /// <summary>
+        /// 把开关拨回系统侧的真实状态(不改设置)。
+        /// 必须挡住 <c>IsCheckedChanged</c>,否则这次回拨会被当成又一次用户操作,来回打架。
+        /// </summary>
+        private void RevertAutoStartSwitch(bool value)
+        {
+            this._initializing = true;
+            try
+            {
+                this.AutoStartSwitch.IsChecked = value;
+            }
+            finally
+            {
+                this._initializing = false;
+            }
         }
 
         private void OnAfterDshServiceStartedChanged(object? sender, SelectionChangedEventArgs e)

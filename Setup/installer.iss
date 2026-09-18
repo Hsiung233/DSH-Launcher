@@ -243,6 +243,22 @@ begin
     Log('删除用户数据目录失败(可能被占用): ' + Dir);
 end;
 
+// 删除“开机自启动”注册项(用户在设置页开启过就会留下)。
+// ⚠ 这一步**与“是否清理用户数据”无关,必须无条件执行**:程序文件都删了,注册项还留着的话,
+// 每次登录 Windows 都会尝试启动一个不存在的 exe(用户看到的是报错,或干脆什么都没发生)。
+// 值名与内容见 AutoStartService / AutoStartEntry(HKCU\...\Run 下名为 "DSH Launcher" 的字符串值);
+// 这里**按名字删、不管它指向哪** —— 与设置页“设置是唯一真相”的口径一致。
+procedure RemoveAutoStartEntry;
+var
+  Deleted: Boolean;
+begin
+  Deleted := RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DSH Launcher');
+  if Deleted then
+    Log('已删除开机自启动项: HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DSH Launcher')
+  else
+    Log('开机自启动项不存在(用户没开启过,或已被手动删除),无需处理');
+end;
+
 // 弹框询问是否清理用户数据:把两个具体目录列出来,默认按钮是「否」(保留),避免误删
 function AskRemoveUserData: Boolean;
 var
@@ -267,6 +283,9 @@ begin
     Exit;
 
   DeleteUserDataDir(WebView2FallbackDir);
+
+  // 自启动项**与“是否清理用户数据”无关**:程序删了它就必须走,见 RemoveAutoStartEntry 的说明
+  RemoveAutoStartEntry;
 
   if HasCommandLineSwitch(SwitchCleanData) then
     RemoveData := True

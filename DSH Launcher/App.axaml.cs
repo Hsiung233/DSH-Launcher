@@ -61,7 +61,19 @@ public partial class App : Application
             this._singleInstance = SingleInstanceGuard.Acquire();
             if (!this._singleInstance.IsPrimary)
             {
-                this._singleInstance.NotifyExistingInstance();
+                if (StartupArguments.IsAutoStartLaunch)
+                {
+                    // ⚠ 自启动撞上已有实例**不要**通知:NotifyExistingInstance 会唤起已有实例的主界面,
+                    // 正好违背了“自启动静默收进托盘”的意图(登录时本不该弹窗)。已有实例本来就在托盘里,
+                    // 它的服务状态由它自己管,本次自启动无事可做、直接退出即可。
+                    // 场景虽然边缘(登录时一般没有别的实例),但手动带 --autostart 测试时必撞。
+                    AppLogService.Write("[启动] 本次由开机自启动拉起,但已有实例在运行,直接退出(不打扰已有实例)");
+                }
+                else
+                {
+                    this._singleInstance.NotifyExistingInstance();
+                }
+
                 Environment.Exit(0);
                 return;
             }
@@ -92,7 +104,15 @@ public partial class App : Application
             }
             else
             {
-                // 本次是干净链:上一次逃逸留下的标记已经无意义,顺手清掉(理由见 DeleteMarker)
+                // 本次是干净链:上一次逃逸留下的标记已经无意义,顺手清掉(理由见 DeleteMarker)。
+                // ⚠ 删之前先把"逃逸前是自启动"的语义接过来 —— 干净链实例不调 ConsumeMarker(护栏只对链内有意义),
+                // 不接的话逃逸重启后的新实例会丢掉自启动行为,弹主界面。
+                if (CompatChainEscape.MarkerCarriesAutoStartFlag())
+                {
+                    StartupArguments.MarkAutoStartLaunch();
+                    AppLogService.Write("[启动] 逃逸前是自启动拉起,重启后维持自启动行为(不弹主界面)。");
+                }
+
                 CompatChainEscape.DeleteMarker();
             }
 
@@ -109,6 +129,14 @@ public partial class App : Application
             if (SettingsService.Instance.TakeLoadDiagnostic() is { } settingsDiagnostic)
             {
                 DshService.Instance.AppendSystemLog(settingsDiagnostic);
+            }
+
+            // 开机自启动:把系统侧的自启动项与设置对齐(程序换了安装目录、注册项被手工删掉时在这里自愈)。
+            // 放在启动流程里而不是设置页 —— 自启动要在用户还没进过任何页面时就已经是有效的。
+            // 诊断信息同样由这里转写(理由同上一段:自启动服务比 DshService 更底层,不自己写日志)。
+            if (AutoStartService.Instance.Reconcile() is { } autoStartDiagnostic)
+            {
+                DshService.Instance.AppendSystemLog(autoStartDiagnostic);
             }
 
             // 启动时把"兼容层/提权"相关的环境证据写进 app.log,便于事后比对两条启动路径的差异
@@ -132,7 +160,14 @@ public partial class App : Application
             // 注意:Avalonia 11.1+ 的 ClassicDesktopStyleApplicationLifetime 会在启动结束时
             // 自动调用 desktop.MainWindow.Show(),因此关闭设置时绝不能给 desktop.MainWindow
             // 赋值(托盘"打开界面"走 _window.Show(),不依赖该属性),否则主界面总会被显示。
-            if (SettingsService.Instance.Settings.ShowMainWindowOnStartup)
+            //
+            // 由**系统自启动**拉起时一律收进托盘(见 StartupArguments):登录就弹一个窗口是用户关掉
+            // 自启动的首要原因;服务照常按设置启动,想用界面时点托盘图标即可。
+            if (StartupArguments.IsAutoStartLaunch)
+            {
+                AppLogService.Write("[启动] 本次由开机自启动拉起,已启动到系统托盘");
+            }
+            else if (SettingsService.Instance.Settings.ShowMainWindowOnStartup)
             {
                 desktop.MainWindow = _window;
                 _window.Show();
