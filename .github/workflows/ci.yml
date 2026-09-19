@@ -46,23 +46,34 @@ jobs:
       - name: 安装 .NET SDK(按 global.json)
         uses: actions/setup-dotnet@v4
 
-      - name: 安装 Inno Setup
-        run: choco install innosetup --no-progress -y
-
-      # 校验 tag 与程序集版本一致(如 v1.0.1 ↔ csproj <Version>1.0.1</Version>),
-      # 防止安装包 AppVersion 与 Release 版本号对不上。
-      - name: 校验 tag 与应用版本一致
+      # tag 是版本号的唯一事实来源:打包前把 csproj 的 <Version> 改成 tag 的值,
+      # 应用自身版本、环境面板"应用版本"、安装包 AppVersion 随之自动一致,无需手动同步。
+      - name: 用 tag 覆盖应用版本
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}".TrimStart('v')
-          $exe = Join-Path "DSH Launcher" "bin\Publish\DSH Launcher_Windows_x64\DSH Launcher.exe"
-          if (-not (Test-Path $exe)) { throw "找不到发布产物 $exe(发布步骤未执行?)" }
-          $ver = (Get-Item $exe).VersionInfo.FileVersion
-          Write-Host "tag=$tag exe=$ver"
-          if ($ver -ne $tag) { throw "tag(v$tag) 与应用版本($ver)不一致。请同步修改 csproj 的 <Version> 后重新打 tag。" }
+          if ($tag -notmatch '^\d+(\.\d+){1,3}$') { throw "tag 不符合版本号格式: $tag" }
+          $csproj = "DSH Launcher/DSH Launcher.csproj"
+          (Get-Content $csproj -Raw) -replace '(?m)^(\s*<Version>)[^<]*(</Version>)', "`${1}$tag`${2}" |
+            Set-Content $csproj -NoNewline -Encoding utf8
+          Select-String $csproj -Pattern '<Version>' | ForEach-Object { $_.Line.Trim() }
+
+      - name: 安装 Inno Setup
+        run: choco install innosetup --no-progress -y
 
       - name: 构建安装包
         run: ./Build-Installer.ps1
+
+      # 双保险:打完包后核对 exe 的 FileVersion 确实等于 tag(防止上面的替换没生效)。
+      - name: 校验产物版本与 tag 一致
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $exe = "DSH Launcher/bin/Publish/DSH Launcher_Windows_x64/DSH Launcher.exe"
+          if (-not (Test-Path $exe)) { throw "找不到发布产物 $exe(发布步骤未执行?)" }
+          $ver = (Get-Item $exe).VersionInfo.FileVersion
+          Write-Host "tag=$tag exe=$ver"
+          if ($ver -ne $tag) { throw "应用版本($ver)与 tag($tag)不一致,发布中止。" }
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
