@@ -6,7 +6,7 @@
     <!-- 应用版本:环境面板的"应用版本"与安装包 AppVersion(installer.iss 从发布 exe 读)都取自这里。
          发布新版本时必须与 git tag 同步改(如 tag v1.0.1 → 这里 1.0.1);
          ci.yml 的 installer job 会校验两者一致,不一致直接失败。 -->
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <!-- Nullable / LangVersion / 分析器设置集中在仓库根的 Directory.Build.props -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
