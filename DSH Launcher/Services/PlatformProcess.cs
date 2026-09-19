@@ -96,19 +96,16 @@ namespace DSH_Launcher.Services
         /// 系统 OEM 代码页 —— cmd.exe 等原生工具在**重定向**时使用的编码(中文 Windows = GBK/936)。
         /// 取不到时退回 UTF-8(总比把字符变成替字符好)。
         /// </summary>
-        private static readonly Encoding OemEncoding = CreateOemEncoding();
-
-        private static Encoding CreateOemEncoding()
+        /// <remarks>
+        /// ⚠ 必须先注册代码页提供程序:.NET (Core) 起默认的 EncodingProvider 只认 Unicode 系列,
+        /// 中文 Windows 的 GBK/936 不在其中 —— 不注册时 GetEncoding(936) 会抛
+        /// NotSupportedException,这里就把 OEM 静默退化成 UTF-8,
+        /// 于是 DecodeChildOutputLine 的"严格 UTF-8 失败 → 回退 OEM 代码页"分支永远解不出
+        /// cmd.exe 自己写的中文消息(GBK 字节),只能得到 U+FFFD 乱码。
+        /// CodePagesEncodingProvider 由共享框架提供,不需要额外的 NuGet 包。
+        /// </remarks>
+        private static Encoding GetOemEncoding()
         {
-            // ⚠ 必须先注册代码页提供程序:.NET (Core) 起默认的 EncodingProvider 只认 Unicode 系列,
-            // 中文 Windows 的 GBK/936 不在其中 —— 不注册时 GetEncoding(936) 会抛
-            // NotSupportedException,下面这个 catch 就把 OemEncoding 静默退化成 UTF-8,
-            // 于是 DecodeChildOutputLine 的"严格 UTF-8 失败 → 回退 OEM 代码页"分支永远解不出
-            // cmd.exe 自己写的中文消息(GBK 字节),只能得到 U+FFFD 乱码。
-            // 放在这里而不是静态构造函数:静态字段初始化器(含 OemEncoding)在静态构造函数体之前执行。
-            // CodePagesEncodingProvider 由共享框架提供,不需要额外的 NuGet 包。
-            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-
             try
             {
                 return Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage);
@@ -117,6 +114,16 @@ namespace DSH_Launcher.Services
             {
                 return Encoding.UTF8;
             }
+        }
+
+        static PlatformProcess()
+        {
+            // 注册代码页提供程序要在任何 GetEncoding(非 Unicode)调用之前;
+            // 这里用静态构造函数而不是字段初始化器:OEM 代码页改为解码时逐次求值
+            // (Encoding.GetEncoding 内部自带缓存,重复求值无额外开销),
+            // 固化到静态字段会跟着类型首次加载时的 CurrentCulture 一起固化,
+            // 测试里再改 CurrentCulture 也影响不到它。
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         }
 
         /// <summary>
@@ -147,7 +154,7 @@ namespace DSH_Launcher.Services
             }
             catch (DecoderFallbackException)
             {
-                return OemEncoding.GetString(bytes);
+                return GetOemEncoding().GetString(bytes);
             }
         }
 
