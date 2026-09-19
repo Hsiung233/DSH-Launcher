@@ -154,6 +154,74 @@ namespace DSH_Launcher.Services
 
         private PluginService()
         {
+            // dsh 停止/退出(可能发生在后台线程)时清空"待重启生效"集合:
+            // 重新启动后磁盘状态 == 运行状态,标注自然失效;再次安装会在 InstallCoreAsync 重新对账。
+            DshService.Instance.StateChanged += () =>
+            {
+                if (!DshService.Instance.IsRunning)
+                {
+                    lock (this._pendingRestartLock)
+                    {
+                        this._pendingRestartNames.Clear();
+                    }
+                }
+            };
+        }
+
+        /// <summary>
+        /// 服务运行中安装、尚未被运行实例装载的包名(profile dependencies 的真实包名,不是安装规格)。
+        /// <c>--dump-config</c> 反映磁盘(下次启动的加载集),所以运行中安装的插件在列表里
+        /// 立刻"看起来已在组合里",该集合用来给这些条目标注「重启后生效」。
+        /// 清空时机:dsh 停止/退出(<see cref="DshService.StateChanged"/> 订阅,见构造函数);
+        /// 展示时还按 <see cref="DshService.IsRunning"/> 把门。
+        /// </summary>
+        private readonly Lock _pendingRestartLock = new();
+        private readonly HashSet<string> _pendingRestartNames = new(StringComparer.Ordinal);
+
+        private void MarkPendingRestart(IEnumerable<string> packageNames)
+        {
+            lock (this._pendingRestartLock)
+            {
+                foreach (var name in packageNames)
+                {
+                    this._pendingRestartNames.Add(name);
+                }
+            }
+        }
+
+        private HashSet<string> PendingRestartSnapshot()
+        {
+            lock (this._pendingRestartLock)
+            {
+                return new HashSet<string>(this._pendingRestartNames, StringComparer.Ordinal);
+            }
+        }
+
+        /// <summary>读 profile 清单的 dependencies 键(真实包名);读不到时返回空集。</summary>
+        private static HashSet<string> ReadDependencyNames()
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            try
+            {
+                if (File.Exists(ManifestPath))
+                {
+                    using var document = JsonDocument.Parse(File.ReadAllText(ManifestPath), ManifestReadOptions);
+                    if (document.RootElement.TryGetProperty("dependencies", out var deps)
+                        && deps.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var property in deps.EnumerateObject())
+                        {
+                            names.Add(property.Name);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // 清单可能正被 dsh plugin 写;读不到就无从对账,留给下一次刷新
+            }
+
+            return names;
         }
 
         /// <summary>记录一行插件页日志(同时写入 app.log,便于事后排查)。</summary>
@@ -370,6 +438,12 @@ namespace DSH_Launcher.Services
             var composed = ParseCompositionDump(dump);
             var bundleSet = new HashSet<string>(bundles, StringComparer.Ordinal);
 
+            // 「重启后生效」只在 dsh 运行时有意义:运行中安装的包,运行实例还没装载它。
+            // (停止态下不需要标注 —— 下次启动自然带上。)
+            var pendingRestart = DshService.Instance.IsRunning
+                ? this.PendingRestartSnapshot()
+                : new HashSet<string>(StringComparer.Ordinal);
+
             // 组合树条目:自带插件(如 ui-schedule)也能在这里启停
             var allEntries = composed
                 .Select(row => new PluginEntry
@@ -382,6 +456,7 @@ namespace DSH_Launcher.Services
                     IsActive = !row.Disabled,
                     InComposition = true,
                     HasOverride = overrides.ContainsKey(row.Id),
+                    AwaitingRestart = pendingRestart.Contains(row.Name),
                 })
                 .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -431,6 +506,10 @@ namespace DSH_Launcher.Services
                 return -1;
             }
 
+            // 安装规格(如 github:owner/repo)≠ 真实包名:装完对账 dependencies 前后差集
+            // 才能拿到要标注「重启后生效」的包名
+            var dependenciesBefore = ReadDependencyNames();
+
             var exitCode = await RunDshPluginAsync(
                 $"add {PlatformProcess.Quote(spec)}",
                 $"> dsh plugin --profile {ProfileName} add {spec}");
@@ -438,6 +517,18 @@ namespace DSH_Launcher.Services
             if (exitCode == 0)
             {
                 this.AppendSystemLog($"已安装插件 {spec}");
+                if (DshService.Instance.IsRunning)
+                {
+                    var added = ReadDependencyNames()
+                        .Where(name => !dependenciesBefore.Contains(name))
+                        .ToList();
+                    if (added.Count > 0)
+                    {
+                        this.MarkPendingRestart(added);
+                        this.AppendSystemLog("运行中的 dsh 会在重启后装载新插件。");
+                    }
+                }
+
                 return 0;
             }
 

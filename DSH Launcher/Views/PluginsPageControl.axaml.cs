@@ -392,8 +392,12 @@ namespace DSH_Launcher.Views
                 return;
             }
 
-            await this._plugins.UninstallBatchAsync(names);
+            var succeeded = await this._plugins.UninstallBatchAsync(names);
             await this.RefreshAsync();
+            if (succeeded > 0)
+            {
+                await this.PromptRestartAfterUninstallAsync(succeeded);
+            }
         }
 
         /// <summary>弹出确认对话框,列出即将卸载的包;返回是否确认。</summary>
@@ -442,6 +446,72 @@ namespace DSH_Launcher.Views
             return result == FluentAvalonia.UI.Controls.FAContentDialogResult.Primary;
         }
 
+        /// <summary>
+        /// 安装成功后,若 dsh 服务正在运行则询问是否立即重启让它生效。
+        /// 依据(已核实 dsh 源码):新装插件加入 profile 的 bundles 层,而层组合只在
+        /// <c>dsh web</c> 启动时装配 —— 安装只改 package.json 与 node_modules,
+        /// 运行中的进程不感知,刷新 Web 页面也无法生效;启用/禁用(写
+        /// cordis.patch.yml)才走 live 热重载。dsh 未运行时不需要提示,
+        /// 下次启动自然带上新插件。
+        /// </summary>
+        private Task PromptRestartAfterInstallAsync(string pluginName)
+            => this.PromptRestartForChangeAsync(
+                $"已安装 {pluginName}。dsh 服务正在运行,新插件要在服务下次启动时才会加载"
+                + "(bundle 层只在启动时装配,刷新 Web 页面无法生效)。");
+
+        /// <summary>卸载成功后,若 dsh 服务正在运行则询问是否立即重启以移除该插件。</summary>
+        private Task PromptRestartAfterUninstallAsync(int count)
+            => this.PromptRestartForChangeAsync(count == 1
+                ? "已卸载插件。运行中的 dsh 服务要重启后才会移除它。"
+                : $"已卸载 {count} 个插件。运行中的 dsh 服务要重启后才会移除它们。");
+
+        /// <summary>变更后询问是否立即重启 dsh(安装/卸载共用;dsh 未运行时直接跳过)。</summary>
+        private async Task PromptRestartForChangeAsync(string changeText)
+        {
+            if (!DshService.Instance.IsRunning)
+            {
+                return;
+            }
+
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel is not Window owner)
+            {
+                return;
+            }
+
+            var dialog = new FluentAvalonia.UI.Controls.FAContentDialog
+            {
+                Title = "重启 dsh 服务?",
+                Content = new TextBlock
+                {
+                    Text = $"{changeText}\r\n\r\n要现在重启 dsh 服务让变更生效吗?(重启会结束当前会话)",
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                PrimaryButtonText = "立即重启",
+                CloseButtonText = "稍后再说",
+                DefaultButton = FluentAvalonia.UI.Controls.FAContentDialogButton.Primary,
+            };
+
+            var result = await dialog.ShowAsync(owner);
+            if (result != FluentAvalonia.UI.Controls.FAContentDialogResult.Primary)
+            {
+                this._plugins.AppendSystemLog("变更将在下次启动 dsh 服务时生效。");
+                return;
+            }
+
+            var ok = await DshService.Instance.RestartAsync();
+            if (ok)
+            {
+                this._plugins.AppendSystemLog("已重启 dsh 服务,变更已生效。");
+                await this.RefreshAsync();
+            }
+            else
+            {
+                // 失败详情 DshService 已写进 app.log 与首页面板,这里只指路
+                this._plugins.AppendSystemLog("重启 dsh 服务失败,请到首页查看启动日志。");
+            }
+        }
+
         private void UpdateBusy()
         {
             var busy = this._loading || this._catalogLoader.IsLoading || this._plugins.IsBusy;
@@ -471,8 +541,29 @@ namespace DSH_Launcher.Views
             }
 
             this._plugins.AppendLog($"  → {entry.Id}: 已写入 disabled: {(enable ? "false" : "true")}"
-                + ",重启或重载 dsh 后生效");
+                + "," + DescribeToggleEffect());
             await this.RefreshAsync();
+        }
+
+        /// <summary>
+        /// 按运行基线描述启停覆盖的生效方式。判断依据是
+        /// <see cref="DshService.RuntimePatchReload"/>(启动当刻的磁盘配置 = 运行实例的真实配置):
+        /// live ⇒ 写完 cordis.patch.yml 即热生效,不必重启;startup ⇒ 必须重启;
+        /// dsh 未运行 ⇒ 下次启动自然按新文件加载。
+        /// </summary>
+        private static string DescribeToggleEffect()
+        {
+            var dsh = DshService.Instance;
+            if (!dsh.IsRunning)
+            {
+                return "下次启动 dsh 服务时生效";
+            }
+
+            // 基线为空 = 本次运行不是启动器拉起的(用户手动跑的),按 dsh 缺省 live 提示,
+            // 并用"可刷新页面"给用户一个可自行验证的动作
+            return dsh.RuntimePatchReload == "startup"
+                ? "需重启 dsh 服务后生效"
+                : "已热生效,如界面未变可刷新 Web 页面";
         }
 
         /// <summary>删除启动器写入的启停覆盖,回到插件自带的默认状态。</summary>
@@ -502,8 +593,15 @@ namespace DSH_Launcher.Views
             }
 
             entry.IsPendingUninstall = false;
-            await this._plugins.UninstallAsync(entry.Name);
-            await this.RefreshAsync();
+            if (await this._plugins.UninstallAsync(entry.Name))
+            {
+                await this.RefreshAsync();
+                await this.PromptRestartAfterUninstallAsync(1);
+            }
+            else
+            {
+                await this.RefreshAsync();
+            }
         }
 
         /// <summary>
@@ -723,8 +821,12 @@ namespace DSH_Launcher.Views
                 return;
             }
 
-            await this._plugins.InstallCatalogEntryAsync(entry);
+            var ok = await this._plugins.InstallCatalogEntryAsync(entry);
             await this.RefreshAsync();
+            if (ok)
+            {
+                await this.PromptRestartAfterInstallAsync(entry.Name);
+            }
         }
 
         /// <summary>目录条目行上的「详情」:在浏览器里打开目录页面。</summary>
@@ -756,9 +858,13 @@ namespace DSH_Launcher.Views
                 return;
             }
 
-            await this._plugins.InstallAsync(spec);
+            var ok = await this._plugins.InstallAsync(spec);
             await this.RefreshAsync();
             this.InstallSpecBox.Text = string.Empty;
+            if (ok)
+            {
+                await this.PromptRestartAfterInstallAsync(spec);
+            }
         }
 
         private void OnPluginLogAppended(string text) => Dispatcher.UIThread.Post(() =>

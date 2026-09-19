@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -74,6 +76,16 @@ namespace DSH_Launcher.Services
         private static readonly Regex WebUrlRegex = GetWebUrlRegex();
 
         public bool IsRunning => IsAlive(this._process);
+
+        /// <summary>
+        /// 本次运行基线:启动实例时 profile 清单里的 <c>dsh.profile.patchReload</c>(<see cref="CaptureRuntimePatchReload"/>)。
+        /// 运行中的 dsh **永远按启动那一刻读到的磁盘值行事**,之后磁盘再改不影响它 ——
+        /// 所以"启动成功当刻读到的值"就等于运行实例的真实配置,从机制上消除了
+        /// "磁盘配置与运行状态不一致"的窗口(这正是不直接读磁盘的原因)。
+        /// 值只有两档:"live"(缺省,改 cordis.patch.yml 热生效)/"startup"(启停也要重启);
+        /// 空串 = 本次运行不是由启动器拉起的(基线未知,消费方按 dsh 缺省 live 处理)。
+        /// </summary>
+        public string RuntimePatchReload { get; private set; } = string.Empty;
 
         public string? InstalledVersion { get; private set; }
         public bool IsInstalling { get; private set; }
@@ -561,13 +573,53 @@ namespace DSH_Launcher.Services
             var exitedInWindow = await Task.Run(() => process.WaitForExit((int)StartProbeWindow.TotalMilliseconds));
             if (!exitedInWindow)
             {
-                return true; // 进程存活,视为启动成功
+                // 视为启动成功:此刻起磁盘上"这份配置"就是运行实例的行为了,立即取基线
+                this.CaptureRuntimePatchReload();
+                return true;
             }
 
             // 4) 进程已退出:按官方文档再调一次无参 WaitForExit,等待异步输出读取全部完成,避免日志截断
             await Task.Run(process.WaitForExit);
             this.TryRecordStartFailure(process, this._lastStartLogMark);
             return false;
+        }
+
+        /// <summary>
+        /// 读取"本次运行基线"(<see cref="RuntimePatchReload"/>):在启动成功当刻读 profile 清单,
+        /// 之后不再读 —— 运行实例用的就是这份(启动当刻的)配置,哪怕磁盘随后被改。
+        /// 语义对齐 dsh 的 loadProfileDirectory:值必须是 "live"/"startup"(否则启动会失败),
+        /// 清单缺失该字段时按 "live"。
+        /// </summary>
+        private void CaptureRuntimePatchReload()
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(PluginService.ManifestPath));
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object
+                    && root.TryGetProperty("dsh", out var dsh) && dsh.ValueKind == JsonValueKind.Object
+                    && dsh.TryGetProperty("profile", out var profile) && profile.ValueKind == JsonValueKind.Object
+                    && profile.TryGetProperty("patchReload", out var patchReload)
+                    && patchReload.ValueKind == JsonValueKind.String
+                    && string.Equals(patchReload.GetString(), "startup", StringComparison.Ordinal))
+                {
+                    this.RuntimePatchReload = "startup";
+                }
+                else
+                {
+                    this.RuntimePatchReload = "live";
+                }
+            }
+            catch (Exception ex)
+            {
+                // 清单读不到不代表没启动成功(文件可能正被 dsh plugin 改写):按 dsh 缺省处理并留证
+                this.RuntimePatchReload = "live";
+                AppLogService.Write($"[启动] 读取 patchReload 基线失败({ex.Message}),按 live 处理。");
+                return;
+            }
+
+            AppLogService.Write($"[启动] patchReload 基线 = {this.RuntimePatchReload}"
+                + (this.RuntimePatchReload == "live" ? "(启停覆盖热生效)" : "(启停覆盖需重启生效)"));
         }
 
         /// <summary>进程退出回调:观察期内的意外退出视为启动失败,通知 UI 弹窗。</summary>
@@ -579,6 +631,8 @@ namespace DSH_Launcher.Services
                 && DateTime.UtcNow - this._startTimeUtc < LateExitFailureWindow;
 
             this.WebUrl = null;
+            // 进程没了,运行基线随之失效(消费方以 IsRunning 为门,这里是保持状态自洽)
+            this.RuntimePatchReload = string.Empty;
             StateChanged?.Invoke();
 
             if (failedEarly)
@@ -756,6 +810,9 @@ namespace DSH_Launcher.Services
                     this.CloseJobHandle();
                 }
             }
+
+            // 服务已停,运行基线随之失效(下次 StartAsync 会重新捕获)
+            this.RuntimePatchReload = string.Empty;
 
             // 服务已停,WebView 里只剩一个连不上的死页面:真正关闭窗口并释放 WebView2 进程(约 470MB)。
             // 这里不采用“隐藏”——服务都停了,保留窗口只会白占内存。

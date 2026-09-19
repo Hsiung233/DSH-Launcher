@@ -95,6 +95,15 @@ namespace DSH_Launcher.Models
         /// <summary>cordis.patch.yml 的托管区块里是否已有该条目 id 的覆盖(有则可“恢复默认”)。</summary>
         public bool HasOverride { get; init; }
 
+        /// <summary>
+        /// 服务正在运行时安装的插件:运行中的 dsh 要重启后才会装载它。
+        /// 注意不能用"不在组合树"推断 —— <c>--dump-config</c> 是新进程读磁盘,
+        /// 安装后立刻刷新就会让该条目"看起来已在组合里",但它对运行实例还没生效。
+        /// 由 <see cref="Services.PluginService"/> 在安装当刻对账 dependencies 前后差集得出,
+        /// dsh 停止或重启后自动清空。
+        /// </summary>
+        public bool AwaitingRestart { get; init; }
+
         /// <summary>是否为 dsh 自带的层(bundle 且不是依赖;卸载会破坏 profile,故不提供卸载)。</summary>
         public bool IsBuiltInBundle => this.IsBundle && !this.IsInstalled;
 
@@ -115,10 +124,10 @@ namespace DSH_Launcher.Models
             _ => "组合条目",
         };
 
-        /// <summary>状态说明:已启用 / 已禁用 / 未参与组合。</summary>
-        public string StateText => this.InComposition
-            ? (this.IsActive ? "已启用" : "已禁用")
-            : "未参与组合";
+        /// <summary>状态说明:已启用 / 已禁用 / 未参与组合;等待重启生效时追加标注。</summary>
+        public string StateText =>
+            (this.InComposition ? (this.IsActive ? "已启用" : "已禁用") : "未参与组合")
+            + (this.AwaitingRestart ? " · 重启后生效" : string.Empty);
 
         /// <summary>启停按钮的文案(不按当前状态命名:按钮执行的是切换动作)。</summary>
         public string ToggleText => this.IsActive ? "禁用" : "启用";
