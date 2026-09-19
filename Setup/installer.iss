@@ -18,6 +18,10 @@
 AppId={{B7E4A2D1-9F3C-4E86-A5B0-D8C1E2F4A697}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+; 不写这条时,注册表卸载键的 DisplayName 取 AppVerName(=「AppName 版本 X」),
+; Windows「设置→应用」里应用名就会带版本后缀。显式指定为纯应用名,与其他常见应用一致;
+; 版本号仍显示在该列表的次要行(来自 DisplayVersion),信息不丢。
+UninstallDisplayName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppNameNoSpace}
 DefaultGroupName={#MyAppName}
