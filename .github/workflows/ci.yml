@@ -73,7 +73,15 @@ jobs:
           if (-not (Test-Path $exe)) { throw "找不到发布产物 $exe(发布步骤未执行?)" }
           $ver = (Get-Item $exe).VersionInfo.FileVersion
           Write-Host "tag=$tag exe=$ver"
-          if ($ver -ne $tag) { throw "应用版本($ver)与 tag($tag)不一致,发布中止。" }
+          # MSBuild 会把 <Version> 补齐成 4 段(1.1.0 → 1.1.0.0)写入 Win32 VERSIONINFO,
+          # 所以不能做字符串严格比较,要按版本段比较(tag 未写出的段视为任意)。
+          $t = [Version]$tag
+          $v = [Version]$ver
+          $mismatch =
+            ($v.Major -ne $t.Major) -or ($v.Minor -ne $t.Minor) -or
+            (($t.Build -ge 0) -and ($v.Build -ne $t.Build)) -or
+            (($t.Revision -ge 0) -and ($v.Revision -ne $t.Revision))
+          if ($mismatch) { throw "应用版本($ver)与 tag($tag)不一致,发布中止。" }
 
       - name: 上传安装包
         uses: actions/upload-artifact@v4
