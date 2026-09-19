@@ -25,8 +25,13 @@ jobs:
       - name: 构建
         run: dotnet build "DSH Launcher.slnx" --no-restore -c Release
 
+      # 测试项目不在 .slnx 里(见 slnx 内的说明),必须单独构建;
+      # 不构建的话 dotnet test --no-build 会静默匹配 0 个测试文件而"假通过"。
+      - name: 构建测试项目
+        run: dotnet build "DSH Launcher.Tests/DSH Launcher.Tests.csproj" -c Release
+
       - name: 测试
-        run: dotnet test "DSH Launcher.Tests" --no-build -c Release
+        run: dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj" -c Release --no-build --nologo
 
   # 打 tag(如 v1.2.0)时额外构建安装包并上传为 Artifact
   installer:
