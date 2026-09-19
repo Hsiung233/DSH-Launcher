@@ -45,7 +45,10 @@ PrivilegesRequired=lowest
 AppMutex=DSH_Launcher_SingleInstance
 
 [Languages]
-Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; 中文语言文件随仓库走(Setup\Languages\),不依赖 Inno Setup 安装目录里是否带它 ——
+; CI(Runner 上 choco 装的 Inno Setup)就没有这个文件,用 compiler: 前缀会直接编译失败。
+; 相对路径以 .iss 所在目录为基准。
+Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
