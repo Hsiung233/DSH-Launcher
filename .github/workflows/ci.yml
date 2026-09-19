@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]   # tags 必须单独列出:branches 过滤器不包含 tag,否则打 tag 不会触发发布
   pull_request:
   workflow_dispatch:
 
