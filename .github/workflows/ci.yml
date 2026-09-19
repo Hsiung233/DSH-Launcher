@@ -49,6 +49,18 @@ jobs:
       - name: 安装 Inno Setup
         run: choco install innosetup --no-progress -y
 
+      # 校验 tag 与程序集版本一致(如 v1.0.1 ↔ csproj <Version>1.0.1</Version>),
+      # 防止安装包 AppVersion 与 Release 版本号对不上。
+      - name: 校验 tag 与应用版本一致
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $exe = Join-Path "DSH Launcher" "bin\Publish\DSH Launcher_Windows_x64\DSH Launcher.exe"
+          if (-not (Test-Path $exe)) { throw "找不到发布产物 $exe(发布步骤未执行?)" }
+          $ver = (Get-Item $exe).VersionInfo.FileVersion
+          Write-Host "tag=$tag exe=$ver"
+          if ($ver -ne $tag) { throw "tag(v$tag) 与应用版本($ver)不一致。请同步修改 csproj 的 <Version> 后重新打 tag。" }
+
       - name: 构建安装包
         run: ./Build-Installer.ps1
 
