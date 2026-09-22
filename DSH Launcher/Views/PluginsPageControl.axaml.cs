@@ -46,7 +46,7 @@ namespace DSH_Launcher.Views
         /// <summary>正在读取插件清单(与服务的忙碌状态共同决定进度环与按钮可用性)。</summary>
         private bool _loading;
 
-        /// <summary>右列「全部组合条目」当前实际显示的条目(受筛选框影响),批量选择以它为准。</summary>
+        /// <summary>单列表当前实际显示的条目(受「显示全部」与筛选框影响),批量选择以它为准。</summary>
         private IReadOnlyList<PluginEntry> _entriesView = [];
 
         /// <summary>已订阅选中态变化的条目(每次刷新重建,用于退订)。</summary>
@@ -172,13 +172,10 @@ namespace DSH_Launcher.Views
             // 选中态存在 PluginEntry 上,刷新后是新对象 —— 先把旧的监听退掉并重新监听新的
             this.ObserveSelection(snapshot);
 
-            // ① 已安装的插件
-            this.InstalledPluginsList.ItemsSource = snapshot.Installed;
-            this.InstalledCountText.Text = snapshot.Installed.Count == 0 ? string.Empty : $"{snapshot.Installed.Count} 个";
+            // ① 空态:一个用户插件都没有时提示去安装(列表本身照常显示有覆盖的条目)
             this.InstalledEmptyPanel.IsVisible = snapshot.Installed.Count == 0;
 
-            // ② 全部组合条目(按筛选框过滤)
-            this.AllEntriesCountText.Text = $"共 {snapshot.AllEntries.Count} 条";
+            // ② 单列表「插件与条目」(按「显示全部」与筛选框决定实际显示哪些,计数也在那里算)
             this.ApplyEntryFilter();
 
             // ③ pnpm 状态:安装/卸载都由 dsh plugin 转发给它,缺失时只提示、不禁用页面(启停不依赖 pnpm)
@@ -190,8 +187,10 @@ namespace DSH_Launcher.Views
                     + "可执行 npm install -g pnpm@10 修复后点「刷新」。");
             }
 
-            var summary = $"profile “{PluginService.ProfileName}” · 已安装 {snapshot.Installed.Count} 个插件"
-                + $" · 组合条目 {snapshot.AllEntries.Count} 条 · {PluginService.ProfileDirectory}";
+            // 计数按**包**算已安装数(条目是 entry 粒度,一个包会派生多条),按**条**算列表
+            var packageCount = snapshot.Installed.Select(entry => entry.Name).Distinct(StringComparer.Ordinal).Count();
+            var summary = $"profile “{PluginService.ProfileName}” · 已安装 {packageCount} 个插件"
+                + $" · 条目 {snapshot.AllEntries.Count} 条 · {PluginService.ProfileDirectory}";
             var notes = new List<string>();
             if (!snapshot.PnpmAvailable)
             {
@@ -209,22 +208,45 @@ namespace DSH_Launcher.Views
                 : summary + Environment.NewLine + string.Join(Environment.NewLine, notes);
         }
 
-        /// <summary>按筛选框内容过滤「全部组合条目」(包名或条目 id 的子串匹配)。</summary>
+        /// <summary>
+        /// 决定单列表「插件与条目」实际显示哪些行(包名或条目 id 的子串匹配)。
+        /// 默认只显示"与用户有关"的条目(已安装插件的条目 + 有启停覆盖的);
+        /// 完整组合树(含 dsh 自带条目)由「显示全部」开关放出,搜索时始终搜全部
+        /// (用户输关键词就是想找具体条目,不该被默认收起挡住)。
+        /// </summary>
         private void ApplyEntryFilter()
         {
             var all = this._snapshot?.AllEntries ?? (IReadOnlyList<PluginEntry>)[];
             var filter = this.EntryFilterBox.Text?.Trim() ?? string.Empty;
+            var showAll = filter.Length > 0 || this.ShowAllEntriesBox.IsChecked == true;
 
-            var view = filter.Length == 0
-                ? all
-                : all.Where(entry =>
+            IEnumerable<PluginEntry> query = all;
+            if (!showAll)
+            {
+                query = query.Where(entry => entry.IsInstalled || entry.HasOverride);
+            }
+
+            if (filter.Length > 0)
+            {
+                query = query.Where(entry =>
                         entry.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
-                        || entry.Id.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
+                        || entry.Id.Contains(filter, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var view = query as IReadOnlyList<PluginEntry> ?? query.ToList();
 
             // 记下当前显示的这批:批量选择/全选都以“看得见的”为准
             this._entriesView = view;
             this.AllEntriesList.ItemsSource = view;
+
+            var packages = (this._snapshot?.Installed ?? (IReadOnlyList<PluginEntry>)[])
+                .Select(entry => entry.Name)
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+            var tail = view.Count == all.Count
+                ? $"共 {all.Count} 条"
+                : $"显示 {view.Count} 条 / 共 {all.Count} 条";
+            this.AllEntriesCountText.Text = $"已安装 {packages} 个插件 · {tail}";
             this.UpdateBatchBar();
         }
 
@@ -241,15 +263,8 @@ namespace DSH_Launcher.Views
 
             this._observedEntries.Clear();
 
-            // 两份列表会共享同一批实例(左列是从右列里筛出来的),用引用去重避免重复订阅
-            var seen = new HashSet<PluginEntry>();
-            foreach (var entry in snapshot.Installed.Concat(snapshot.AllEntries))
-            {
-                if (seen.Add(entry))
-                {
-                    this._observedEntries.Add(entry);
-                }
-            }
+            // 单列表数据源就是 AllEntries(Installed 是它的子集、同一批实例),订阅它即可
+            this._observedEntries.AddRange(snapshot.AllEntries);
 
             foreach (var entry in this._observedEntries)
             {
@@ -265,21 +280,8 @@ namespace DSH_Launcher.Views
             }
         }
 
-        /// <summary>当前两列里可见的全部条目(左列已安装 + 右列筛选后的组合条目),去重。</summary>
-        private List<PluginEntry> VisibleEntries()
-        {
-            var seen = new HashSet<PluginEntry>();
-            var result = new List<PluginEntry>();
-            foreach (var entry in (this._snapshot?.Installed ?? []).Concat(this._entriesView))
-            {
-                if (seen.Add(entry))
-                {
-                    result.Add(entry);
-                }
-            }
-
-            return result;
-        }
+        /// <summary>当前列表里可见的条目(受「显示全部」与筛选框影响),批量选择/全选都以它为准。</summary>
+        private IReadOnlyList<PluginEntry> VisibleEntries() => this._entriesView;
 
         /// <summary>
         /// 刷新批量操作栏:计数、按能力启用/禁用按钮、同步「全选」的勾选态。
@@ -304,10 +306,10 @@ namespace DSH_Launcher.Views
             this.BatchUninstallButton.IsEnabled = uninstallable > 0;
 
             ToolTip.SetTip(this.BatchEnableButton, toggleable == 0
-                ? "所选条目里没有可启停的(需出现在组合树里)"
+                ? "所选条目里没有可启停的(只有已安装到 profile 的插件可启停)"
                 : $"对所选中的 {toggleable} 个条目写入 disabled: false");
             ToolTip.SetTip(this.BatchDisableButton, toggleable == 0
-                ? "所选条目里没有可启停的(需出现在组合树里)"
+                ? "所选条目里没有可启停的(只有已安装到 profile 的插件可启停)"
                 : $"对所选中的 {toggleable} 个条目写入 disabled: true");
             ToolTip.SetTip(this.BatchResetButton, resettable == 0
                 ? "所选条目里没有启动器写入的启停覆盖"
@@ -637,8 +639,11 @@ namespace DSH_Launcher.Views
             }
         }
 
-        /// <summary>5 秒内没有再点,自动撤回「确认卸载」状态,避免误触。</summary>
+        /// <summary>筛选框内容变化:重滤「全部组合条目」。</summary>
         private void OnEntryFilterChanged(object? sender, TextChangedEventArgs e) => this.ApplyEntryFilter();
+
+        /// <summary>「显示全部」开关:放出/收起 dsh 自带条目(纯内存重滤)。</summary>
+        private void OnShowAllEntriesClick(object? sender, RoutedEventArgs e) => this.ApplyEntryFilter();
 
         private void OnRefreshPluginsClick(object? sender, RoutedEventArgs e) => _ = this.RefreshAsync(forcePnpmProbe: true);
 

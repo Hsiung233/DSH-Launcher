@@ -16,7 +16,8 @@
                 <VirtualizingStackPanel/>
             </ItemsPanelTemplate>
 
-            <!-- 插件行:已安装列表与“全部组合条目”共用同一套模板。
+            <!-- 插件行:「插件与条目」单列表的行模板。按钮按条目能力显隐:
+                 用户安装的插件可启停/卸载,有覆盖的可恢复默认,dsh 自带条目只读。
                  右边距 16:Fluent 的滚动条是 overlay(画在内容之上),只留 8 会压住行尾的按钮。
                  最左是批量选择框:绑定在数据对象的 IsSelected 上 ——
                  列表是虚拟化的(容器会被回收),勾选态存在行上会错位 -->
@@ -64,7 +65,7 @@
                             <Button Content="恢复默认"
                                     IsVisible="{Binding HasOverride}"
                                     Click="OnClearOverrideClick"
-                                    ToolTip.Tip="删除启动器写入的启停覆盖,回到插件自带的状态"/>
+                                    ToolTip.Tip="删除启动器写入的启停覆盖,回到 dsh 预设的状态(自带条目用它清理历史覆盖)"/>
                             <Button Content="{Binding UninstallText}"
                                     IsVisible="{Binding CanUninstall}"
                                     Click="OnUninstallClick"
@@ -249,7 +250,8 @@
                                 <ListBoxItem Content="安装新插件" Tag="install"/>
                             </ListBox>
 
-                            <!-- 组合条目筛选(只在「已安装」视图用得上) -->
+                            <!-- 筛选 + 批量操作(都只在「已安装」视图用得上)。
+                                 批量操作原是列表上方的一条独立卡片,挪进左栏给列表腾出竖向空间 -->
                             <StackPanel x:Name="EntriesFilterPanel" Spacing="4">
                                 <TextBlock Text="筛选组合条目"
                                            FontSize="12"
@@ -259,6 +261,55 @@
                                          Classes="clearButton"
                                          PlaceholderText="包名或条目 id"
                                          TextChanged="OnEntryFilterChanged"/>
+
+                                <TextBlock Text="批量操作"
+                                           FontSize="12"
+                                           Opacity="0.6"
+                                           Margin="0 6 0 0"/>
+                                <!-- 勾选态存在 PluginEntry 上,列表虚拟化回收容器也不会丢 -->
+                                <CheckBox x:Name="SelectAllBox"
+                                          Content="全选"
+                                          Click="OnSelectAllClick"
+                                          ToolTip.Tip="全选/取消全选**当前列表里可见的条目**(若先筛选则只选筛出来的)"/>
+                                <TextBlock x:Name="BatchCountText"
+                                           FontSize="12"
+                                           Opacity="0.7"
+                                           TextWrapping="Wrap"
+                                           Text="未选择任何条目"/>
+                                <!-- 按钮 2×2:本栏净宽 214,四个横排放不下 -->
+                                <Grid ColumnDefinitions="*,*"
+                                      RowDefinitions="Auto,Auto"
+                                      ColumnSpacing="8"
+                                      RowSpacing="8">
+                                    <Button x:Name="BatchEnableButton"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center"
+                                            Content="批量启用"
+                                            IsEnabled="False"
+                                            Click="OnBatchEnableClick"/>
+                                    <Button x:Name="BatchDisableButton"
+                                            Grid.Column="1"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center"
+                                            Content="批量禁用"
+                                            IsEnabled="False"
+                                            Click="OnBatchDisableClick"/>
+                                    <Button x:Name="BatchResetButton"
+                                            Grid.Row="1"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center"
+                                            Content="恢复默认"
+                                            IsEnabled="False"
+                                            Click="OnBatchResetClick"/>
+                                    <Button x:Name="BatchUninstallButton"
+                                            Grid.Row="1"
+                                            Grid.Column="1"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center"
+                                            Content="批量卸载"
+                                            IsEnabled="False"
+                                            Click="OnBatchUninstallClick"/>
+                                </Grid>
                             </StackPanel>
 
                             <!-- 目录选项(只在「安装新插件」视图用得上) -->
@@ -343,115 +394,19 @@
                  隐藏的那一半 IsVisible=false,其控件不在 UIA 树里) -->
             <Grid Grid.Column="1">
 
-                <!-- 已安装视图:批量操作栏(跨两列) + 两列(已安装 | 全部组合条目) -->
+                <!-- 已安装视图:单列表「插件与条目」(筛选与批量操作都在左栏) -->
                 <Grid x:Name="InstalledView"
-                      RowDefinitions="Auto,*"
-                      RowSpacing="12"
-                      ColumnDefinitions="*,*"
-                      ColumnSpacing="12">
+                      RowDefinitions="*">
 
-                    <!-- 批量操作栏:勾选行左边的选择框后在这里统一操作。
-                         勾选态存在 PluginEntry 上,所以左右两列(共用同一批实例)天然同步 -->
+                    <!-- 单列表「插件与条目」:已安装插件的条目 ∪ 有启停覆盖的条目(操作面),
+                         「显示全部」再放出 dsh 自带条目(只读诊断)。
+                         原先分「已安装」「全部组合条目」两列,但两列共用同一批实例与同一个行模板、
+                         内容互相重复(右列默认视图本就覆盖左列),已合并成这一列 -->
                     <Border Grid.Row="0"
-                            Grid.ColumnSpan="2"
-                            Classes="card"
-                            Padding="12 8">
-                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="12">
-                            <CheckBox x:Name="SelectAllBox"
-                                      Grid.Column="0"
-                                      VerticalAlignment="Center"
-                                      Content="全选"
-                                      Click="OnSelectAllClick"
-                                      ToolTip.Tip="全选/取消全选**当前列表里的条目**(左右两列一起算;若先筛选则只选筛出来的)"/>
-
-                            <TextBlock x:Name="BatchCountText"
-                                       Grid.Column="1"
-                                       VerticalAlignment="Center"
-                                       FontSize="12"
-                                       Opacity="0.7"
-                                       Text="未选择任何条目"/>
-
-                            <StackPanel Grid.Column="3"
-                                        Orientation="Horizontal"
-                                        Spacing="8"
-                                        VerticalAlignment="Center">
-                                <Button x:Name="BatchEnableButton"
-                                        Content="批量启用"
-                                        IsEnabled="False"
-                                        Click="OnBatchEnableClick"/>
-                                <Button x:Name="BatchDisableButton"
-                                        Content="批量禁用"
-                                        IsEnabled="False"
-                                        Click="OnBatchDisableClick"/>
-                                <Button x:Name="BatchResetButton"
-                                        Content="恢复默认"
-                                        IsEnabled="False"
-                                        Click="OnBatchResetClick"/>
-                                <Button x:Name="BatchUninstallButton"
-                                        Content="批量卸载"
-                                        IsEnabled="False"
-                                        Click="OnBatchUninstallClick"/>
-                            </StackPanel>
-                        </Grid>
-                    </Border>
-
-                    <!-- 左列:已安装的插件(dsh.profile 的 dependencies) -->
-                    <Border Grid.Row="1"
-                            Grid.Column="0"
                             Classes="card">
-                        <Grid RowDefinitions="Auto,*" RowSpacing="4">
-                            <StackPanel Grid.Row="0" Spacing="4">
-                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                                    <TextBlock Text="已安装的插件"
-                                               FontSize="14"
-                                               FontWeight="SemiBold"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock x:Name="InstalledCountText"
-                                               Grid.Column="1"
-                                               FontSize="12"
-                                               Opacity="0.7"
-                                               VerticalAlignment="Center"/>
-                                </Grid>
-                                <TextBlock x:Name="InstalledHintText"
-                                           FontSize="12"
-                                           Opacity="0.7"
-                                           TextWrapping="Wrap"
-                                           Text="插件装在这个 profile 里,可启用/禁用,或从 profile 卸载。"/>
-                                <StackPanel x:Name="InstalledEmptyPanel"
-                                            IsVisible="False"
-                                            Margin="0 8 0 0"
-                                            Orientation="Horizontal"
-                                            Spacing="12">
-                                    <TextBlock FontSize="12"
-                                               Opacity="0.7"
-                                               VerticalAlignment="Center"
-                                               Text="尚未安装任何插件。"/>
-                                    <Button x:Name="GoToInstallTabButton"
-                                            Content="去安装新插件"
-                                            Click="OnGoToInstallTabClick"/>
-                                </StackPanel>
-                            </StackPanel>
-
-                            <!-- 列表撑满卡片剩余高度,在卡片内部滚动 -->
-                            <ScrollViewer Grid.Row="1"
-                                          x:Name="InstalledScroll"
-                                          HorizontalScrollBarVisibility="Disabled"
-                                          VerticalScrollBarVisibility="Auto">
-                                <ItemsControl x:Name="InstalledPluginsList"
-                                              ItemsPanel="{StaticResource PluginListPanel}"
-                                              ItemTemplate="{StaticResource PluginRowTemplate}"/>
-                            </ScrollViewer>
-                        </Grid>
-                    </Border>
-
-                    <!-- 右列:全部组合条目(原来是折叠 Expander,两列布局下改成常显卡片:
-                         它占满整列,折叠起来只会留一片空白) -->
-                    <Border Grid.Row="1"
-                            Grid.Column="1"
-                            Classes="card">
-                        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="4">
-                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                                <TextBlock Text="全部组合条目"
+                        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="4">
+                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                <TextBlock Text="插件与条目"
                                            FontSize="14"
                                            FontWeight="SemiBold"
                                            VerticalAlignment="Center"/>
@@ -460,13 +415,37 @@
                                            FontSize="12"
                                            Opacity="0.7"
                                            VerticalAlignment="Center"/>
+                                <!-- 默认收起自带条目:操作面优先,完整组合树是诊断信息。
+                                     搜索框有内容时始终搜全部(用户输关键词就是想找具体条目) -->
+                                <CheckBox x:Name="ShowAllEntriesBox"
+                                          Grid.Column="2"
+                                          Content="显示全部"
+                                          VerticalAlignment="Center"
+                                          Click="OnShowAllEntriesClick"
+                                          ToolTip.Tip="默认只显示已安装插件的条目与有启停覆盖的条目;勾选后显示 dsh 组合出的全部 Loader 条目(搜索时始终搜全部)"/>
                             </Grid>
                             <TextBlock Grid.Row="1"
                                        FontSize="12"
                                        Opacity="0.7"
                                        TextWrapping="Wrap"
-                                       Text="dsh 自带插件与已安装插件组合出的完整 Loader 条目。禁用会写入 profile 的 cordis.patch.yml,重启或重载 dsh 后生效。"/>
-                            <ScrollViewer Grid.Row="2"
+                                       Text="已安装插件的条目可启用/禁用、卸载;「恢复默认」删除启动器写过的启停覆盖。dsh 自带条目由 dsh 预设管理、只读,勾「显示全部」查看完整组合清单。"/>
+                            <!-- 没装任何插件时的空态 -->
+                            <StackPanel x:Name="InstalledEmptyPanel"
+                                        Grid.Row="2"
+                                        IsVisible="False"
+                                        Orientation="Horizontal"
+                                        Spacing="12">
+                                <TextBlock FontSize="12"
+                                           Opacity="0.7"
+                                           VerticalAlignment="Center"
+                                           Text="尚未安装任何插件。"/>
+                                <Button x:Name="GoToInstallTabButton"
+                                        Content="去安装新插件"
+                                        Click="OnGoToInstallTabClick"/>
+                            </StackPanel>
+
+                            <!-- 列表撑满卡片剩余高度,在卡片内部滚动 -->
+                            <ScrollViewer Grid.Row="3"
                                           x:Name="AllEntriesScroll"
                                           HorizontalScrollBarVisibility="Disabled"
                                           VerticalScrollBarVisibility="Auto">
@@ -476,6 +455,7 @@
                             </ScrollViewer>
                         </Grid>
                     </Border>
+
                 </Grid>
 
                 <!-- 安装新插件视图:搜索行 + 目录列表(来源/分类/排序/手动安装都在左栏)。

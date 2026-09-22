@@ -107,8 +107,13 @@ namespace DSH_Launcher.Models
         /// <summary>是否为 dsh 自带的层(bundle 且不是依赖;卸载会破坏 profile,故不提供卸载)。</summary>
         public bool IsBuiltInBundle => this.IsBundle && !this.IsInstalled;
 
-        /// <summary>能否启用/禁用:须在组合树里且有条目 id。</summary>
-        public bool CanToggle => this.InComposition && this.Id.Length > 0;
+        /// <summary>
+        /// 能否启用/禁用:**只有用户安装到 profile 的插件**(dependencies 里的包,且在组合树里有条目 id)。
+        /// dsh 自带层与内部组合条目归 dsh 自己的预设/默认配置管理,启动器不越权开关
+        /// (两套控制权叠在同一个 cordis.patch.yml 覆盖层上会互相打架:dsh 预设更新后启动器残留的覆盖会静默压过它)。
+        /// 自带条目若有**历史覆盖**,仍可用「恢复默认」清理。
+        /// </summary>
+        public bool CanToggle => this.IsInstalled && this.InComposition && this.Id.Length > 0;
 
         /// <summary>能否卸载:只有 dependencies 里的包可由 pnpm 移除。</summary>
         public bool CanUninstall => this.IsInstalled;
@@ -134,7 +139,9 @@ namespace DSH_Launcher.Models
 
         public string ToggleToolTip => this.CanToggle
             ? "在 profile 的 cordis.patch.yml 里写入启停覆盖(重启/重载后生效)"
-            : "该条目不在组合树里,无法启停";
+            : this.InComposition
+                ? "dsh 自带条目由 dsh 预设管理,启动器不对其启停;有历史覆盖时可用「恢复默认」清理"
+                : "该条目不在组合树里,无法启停";
     }
 
     /// <summary>
@@ -297,7 +304,10 @@ namespace DSH_Launcher.Models
         /// <summary>已安装的插件(dependencies 里的包)。</summary>
         public IReadOnlyList<PluginEntry> Installed { get; init; } = [];
 
-        /// <summary>组合出来的全部 Loader 条目(dsh 自带的内部插件也在内)。</summary>
+        /// <summary>
+        /// 全部条目行(单列表数据源)= 组合出来的 Loader 条目 + 装了但没进组合树的包(notComposed)。
+        /// <see cref="Installed"/> 是它按 <c>IsInstalled</c> 筛出的子集(同一批实例)。
+        /// </summary>
         public IReadOnlyList<PluginEntry> AllEntries { get; init; } = [];
 
         /// <summary>pnpm 是否可用(安装/卸载都经 dsh plugin 转发给 pnpm)。</summary>

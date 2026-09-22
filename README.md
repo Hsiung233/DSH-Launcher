@@ -46,15 +46,14 @@ WebView 做了两项体验优化：
 ### 插件管理
 内置插件页，直接读写 dsh 的 profile（默认 `~/.dsh/profiles/web`）：
 
-- **已安装的插件**：列出当前 profile 的 `dependencies`，支持**启用 / 禁用**（通过往 `cordis.patch.yml` 写定向覆盖实现）、**卸载**、**恢复默认**。
-- **全部组合条目**：展示 `dsh --profile web --dump-config` 输出的完整组合清单（含自带 bundle），可搜索筛选。
-- **批量操作**：每行勾选框 + 批量栏，支持全选（作用于当前筛选结果）、批量启用/禁用/卸载/恢复。
+- **插件与条目**（单列表）：汇总已安装插件的条目与有启停覆盖的条目（含未参与组合的包），支持**启用 / 禁用**（通过往 `cordis.patch.yml` 写定向覆盖实现，仅用户安装的插件开放）、**卸载**、**恢复默认**。勾「显示全部」查看 `dsh --profile web --dump-config` 的完整组合清单（只读诊断）：dsh 自带条目由 dsh 预设管理、不提供启停，「恢复默认」用于清理启动器写过的历史覆盖。可搜索筛选。
+- **批量操作**：每行勾选框 + 左栏批量按钮（全选 / 批量启用 / 禁用 / 卸载 / 恢复），支持全选（作用于当前筛选结果）。
 - **安装新插件**：从社区策展目录搜索并一键安装（转发给 `dsh plugin --profile web add ...`）。
   - 支持两份目录：默认 `awesome-dsh-plugin.com`（约 3700 条），或 `dsh-plugin.org`（约 9300 条，带人工验证标记）。目录结构自动识别，按地址缓存，可手动刷新。
   - 也支持手动输入包名/`github:owner/repo` 规格安装。
 - **安装输出**：浮动日志窗实时显示安装/卸载输出；安装开始时自动弹出，关闭后有新日志会显示未读小圆点。
 
-![插件页：已安装的插件与全部组合条目，顶部是批量操作栏](docs/screenshots/plugins-installed.png)
+![插件页：插件与条目列表，筛选与批量操作在左栏](docs/screenshots/plugins-installed.png)
 
 ![插件页：从社区目录浏览并安装新插件](docs/screenshots/plugins-catalog.png)
 
@@ -158,14 +157,14 @@ dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 .\Build-Installer.ps1
 
 # 只发布（输出到 DSH Launcher\bin\Publish\DSH Launcher_Windows_x64）
-.\Publish-App.ps1
+.\Build-Publish.ps1
 ```
 
-`Publish-App.ps1` 默认会**结束正在运行的 DSH Launcher**（常驻托盘的单实例程序，占用文件会让发布失败）
+`Build-Publish.ps1` 默认会**结束正在运行的 DSH Launcher**（常驻托盘的单实例程序，占用文件会让发布失败）
 并**清空发布目录**（`dotnet publish` 不会删除旧产物，残留的 `.pdb`、`Assets\logo.ico` 会被打进安装包），
 分别用 `-KeepRunning`、`-NoClean` 关掉。
 
-`Build-Installer.ps1` 默认先调用 `Publish-App.ps1`（`-NoPublish` 可跳过），自动查找 `ISCC.exe`
+`Build-Installer.ps1` 默认先调用 `Build-Publish.ps1`（`-NoPublish` 可跳过），自动查找 `ISCC.exe`
 （`-ISCC` → PATH → 注册表 → 常见安装位置），并在编译前校验 `installer.iss` 的 `MyPublishDir` 里
 确实有程序文件，最后产出 `Setup\DSHLauncher-Setup-x64.exe`（同时打印文件大小与 SHA256）。
 
@@ -254,8 +253,8 @@ DSH Launcher.Tests/               单元测试（MSTest，覆盖上表中的纯�
   PluginEntryTests.cs             插件条目的界面状态（勾选、待确认卸载）
   AutoStartTests.cs               自启动项格式、`--autostart` 标记、对齐决策表与状态提示文案
 
-Publish-App.ps1                   发布到 bin/Publish 的脚本（清空旧产物、结束运行中的实例）
-Build-Installer.ps1               先调 Publish-App.ps1 发布，再用 Inno Setup 编译安装包
+Build-Publish.ps1                 发布到 bin/Publish 的脚本（清空旧产物、结束运行中的实例）
+Build-Installer.ps1               先调 Build-Publish.ps1 发布，再用 Inno Setup 编译安装包
 Setup/
   installer.iss                   Inno Setup 安装包脚本
 docs/screenshots/                 README 中使用的界面截图

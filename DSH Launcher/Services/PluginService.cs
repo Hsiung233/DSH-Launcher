@@ -444,7 +444,8 @@ namespace DSH_Launcher.Services
                 ? this.PendingRestartSnapshot()
                 : new HashSet<string>(StringComparer.Ordinal);
 
-            // 组合树条目:自带插件(如 ui-schedule)也能在这里启停
+            // 组合树条目:dsh 自带条目(如 ui-schedule)也在内,但启停只对用户安装的插件开放
+            // (自带条目归 dsh 预设管理,见 PluginEntry.CanToggle)
             var allEntries = composed
                 .Select(row => new PluginEntry
                 {
@@ -481,7 +482,11 @@ namespace DSH_Launcher.Services
             return new PluginSnapshot
             {
                 Installed = [.. allEntries.Where(e => e.IsInstalled), .. notComposed],
-                AllEntries = allEntries,
+
+                // 全部条目行 = 组合条目 + notComposed(装了但没进组合树的包)。
+                // 界面只有一份列表(操作面 + 只读诊断),notComposed 必须在这里面,
+                // 否则"装了没生效"这类最需要诊断的行会整类消失
+                AllEntries = [.. allEntries, .. notComposed],
                 PnpmAvailable = pnpmAvailable,
                 Warning = warnings.Count == 0 ? null : string.Join("\r\n", warnings),
             };

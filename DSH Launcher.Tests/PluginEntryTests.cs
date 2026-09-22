@@ -67,9 +67,10 @@ public sealed class PluginEntryTests
     [TestMethod]
     public void CanToggleAndCanUninstall_ReflectOriginOfEntry()
     {
-        // 组合树里的条目(有 id)可启停;只有 dependencies 里的包可卸载
+        // 启停只对用户安装的插件开放(dsh 自带条目归 dsh 预设管理);
+        // 只有 dependencies 里的包可卸载
         var builtIn = new PluginEntry { Id = "ui-schedule", Name = "@dsh/ui-schedule", InComposition = true, IsBundle = true, IsInstalled = false };
-        Assert.IsTrue(builtIn.CanToggle);
+        Assert.IsFalse(builtIn.CanToggle); // 自带层:只读展示,不由启动器启停
         Assert.IsFalse(builtIn.CanUninstall);
         Assert.AreEqual("自带层", builtIn.OriginText);
         Assert.IsTrue(builtIn.IsBuiltInBundle);
@@ -84,5 +85,11 @@ public sealed class PluginEntryTests
         Assert.IsFalse(notComposed.CanToggle);
         Assert.IsTrue(notComposed.CanUninstall);
         Assert.AreEqual("未参与组合", notComposed.StateText);
+
+        // 内部组合条目(既非 bundle 也非依赖):同样只读,归 dsh 预设管理
+        var internalEntry = new PluginEntry { Id = "core-x", Name = "core-x", InComposition = true };
+        Assert.IsFalse(internalEntry.CanToggle);
+        Assert.IsFalse(internalEntry.CanUninstall);
+        Assert.AreEqual("组合条目", internalEntry.OriginText);
     }
 }
