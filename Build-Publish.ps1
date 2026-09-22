@@ -1,9 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    把 DSH Launcher 发布到 bin\Publish(供 Build-Installer.ps1 打包)。
-
-.DESCRIPTION
+    把 DSH Launcher 发布到 bin\Publish(供 Build-Installer.ps1 打包)。.DESCRIPTION
     使用 Properties\PublishProfiles 下的发布配置(默认 DSH Launcher_Windows_x64,框架依赖版)。
     实际输出目录从 .pubxml 的 <PublishDir> 读出,以保证与 installer.iss 的 MyPublishDir 一致。
 
@@ -18,10 +16,10 @@
     两者都可以关掉:-KeepRunning、-NoClean。
 
 .EXAMPLE
-    .\Publish-App.ps1
+    .\Build-Publish.ps1
 
 .EXAMPLE
-    .\Publish-App.ps1 -NoClean -KeepRunning
+    .\Build-Publish.ps1 -NoClean -KeepRunning
 #>
 [CmdletBinding()]
 param(

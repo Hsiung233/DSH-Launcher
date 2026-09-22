@@ -4,7 +4,7 @@
     编译 Setup\installer.iss,生成 Setup\DSHLauncher-Setup-x64.exe。
 
 .DESCRIPTION
-    默认先把应用发布一遍(调用根目录的 Publish-App.ps1),再用 Inno Setup 的命令行编译器 ISCC
+    默认先把应用发布一遍(调用根目录的 Build-Publish.ps1),再用 Inno Setup 的命令行编译器 ISCC
     编译安装包脚本;-NoPublish 则直接打包当前发布目录。
 
     打包源目录与产物名都从 installer.iss 里读(MyPublishDir / MyAppExeName / OutputDir /
@@ -31,7 +31,7 @@ param(
     # ISCC.exe 路径(默认自动查找)
     [string] $ISCC,
 
-    # 转发给 Publish-App.ps1:发布时不结束正在运行的实例
+    # 转发给 Build-Publish.ps1:发布时不结束正在运行的实例
     [switch] $KeepRunning
 )
 
@@ -42,7 +42,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = $PSScriptRoot
 $setupDir = Join-Path $repoRoot 'Setup'
 $issPath = Join-Path $setupDir 'installer.iss'
-$publishScript = Join-Path $repoRoot 'Publish-App.ps1'
+$publishScript = Join-Path $repoRoot 'Build-Publish.ps1'
 
 <#
     读取 .iss 里的 #define "名字" 与 [Setup] 段里 key=value 形式的指令。
@@ -189,7 +189,7 @@ if (-not (Test-Path -LiteralPath $appExe)) {
 打包源里找不到 $myAppExeName(完整路径: $appExe)
 发布目录和 installer.iss 的 MyPublishDir 对不上。请检查:
   - $issPath 的 #define MyPublishDir 是否指向 Properties\PublishProfiles 里发布配置的 PublishDir;
-  - 或先运行 .\Publish-App.ps1 生成发布目录。
+  - 或先运行 .\Build-Publish.ps1 生成发布目录。
 "@
 }
 
