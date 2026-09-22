@@ -69,6 +69,12 @@ public partial class App : Application
                     // 场景虽然边缘(登录时一般没有别的实例),但手动带 --autostart 测试时必撞。
                     AppLogService.Write("[启动] 本次由开机自启动拉起,但已有实例在运行,直接退出(不打扰已有实例)");
                 }
+                else if (StartupArguments.IsShowMainWindowLaunch)
+                {
+                    // --show-main-window:明确要求显示主界面,走专用管道(不受"重复启动应用时"设置影响)。
+                    // 界面自动化验证脚本直接连那条管道;这个参数是给人工/热键工具用的同款入口。
+                    this._singleInstance.NotifyShowMainWindow();
+                }
                 else
                 {
                     this._singleInstance.NotifyExistingInstance();
@@ -122,6 +128,12 @@ public partial class App : Application
                 // 全名限定:Application 自己有个实例属性叫 Dispatcher,不限定会解析成实例成员
                 () => Avalonia.Threading.Dispatcher.UIThread.Post(OnRepeatLaunchRequested));
 
+            // "无条件显示主界面"管道(--show-main-window / 界面自动化脚本用):
+            // 不经"重复启动应用时"设置,收到连接就把主界面叫出来
+            _ = this._singleInstance.ListenShowWindowAsync(
+                _showMainWindowPipeCts.Token,
+                () => Avalonia.Threading.Dispatcher.UIThread.Post(ShowMainWindow));
+
             // 记录应用启动标记到文件日志(%LOCALAPPDATA%\DSH Launcher\Settings\app.log)
             AppLogService.MarkSessionStart();
 
@@ -167,8 +179,11 @@ public partial class App : Application
             {
                 AppLogService.Write("[启动] 本次由开机自启动拉起,已启动到系统托盘");
             }
-            else if (SettingsService.Instance.Settings.ShowMainWindowOnStartup)
+            else if (StartupArguments.IsShowMainWindowLaunch
+                || SettingsService.Instance.Settings.ShowMainWindowOnStartup)
             {
+                // 带 --show-main-window 的**首次**启动(没有已有实例可通知)同样要显示主界面,
+                // 这样它永远是"确定能出窗口"的入口,调用方不必区分自己是不是第一个实例
                 desktop.MainWindow = _window;
                 _window.Show();
             }

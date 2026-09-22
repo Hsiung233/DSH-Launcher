@@ -36,6 +36,15 @@ namespace DSH_Launcher.Services
         /// </summary>
         private const string RepeatLaunchPipeName = "DSH_Launcher_ShowMainWindow";
 
+        /// <summary>
+        /// "无条件显示主界面"通知用的管道名(同样:字面量从引入起就不要改)。
+        /// 与 <see cref="RepeatLaunchPipeName"/> 分开的理由:那个信号的响应是**用户设置**说了算
+        /// ("重复启动应用时"可能是开 WebView/无动作),而界面自动化、热键工具这类调用方
+        /// 要的是确定性 —— 这条管道收到连接就**总是**把主界面叫出来,与设置无关。
+        /// 对应启动参数 <see cref="StartupArguments.ShowMainWindowSwitch"/>。
+        /// </summary>
+        private const string ForceShowPipeName = "DSH_Launcher_ForceShowWindow";
+
         /// <summary>接管"正在退出的上一个实例"时最多重试的次数与间隔(见 <see cref="TryTakeOver"/>)。</summary>
         private const int TakeOverAttempts = 6;
         private const int TakeOverDelayMs = 250;
@@ -83,25 +92,56 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
+        /// 通知已在运行的实例**无条件显示主界面**(连接上即视为信号,不写数据)。
+        /// 与 <see cref="NotifyExistingInstance"/> 的区别:那个按"重复启动应用时"设置响应
+        /// (用户可能配的是开 WebView/无动作,主界面根本不出来),这个总是把主界面叫出来。
+        /// 连接失败同样不算错误。
+        /// </summary>
+        public void NotifyShowMainWindow()
+        {
+            try
+            {
+                using var client = new NamedPipeClientStream(".", ForceShowPipeName, PipeDirection.Out);
+                client.Connect(1000);
+                AppLogService.Write("[启动] 收到显示主界面请求,已通知已有实例显示主界面");
+            }
+            catch (Exception)
+            {
+                // 连接失败(已有实例可能正在退出)时直接退出,不影响已有实例
+            }
+        }
+
+        /// <summary>
         /// 后台监听"重复启动"通知(来自二次启动的进程)。
         /// 命名管道服务端一次只能服务一个连接,每接受一个连接就重建一次监听;
         /// 连接本身即信号,无需读取数据。<paramref name="onRepeatLaunchRequested"/> 在后台线程触发。
         /// </summary>
-        public async Task ListenAsync(CancellationToken cancellationToken, Action onRepeatLaunchRequested)
+        public Task ListenAsync(CancellationToken cancellationToken, Action onRepeatLaunchRequested)
+            => this.ListenOnPipeAsync(RepeatLaunchPipeName, "重复启动", cancellationToken, onRepeatLaunchRequested);
+
+        /// <summary>
+        /// 后台监听"无条件显示主界面"通知(来自带 <see cref="StartupArguments.ShowMainWindowSwitch"/>
+        /// 的二次启动,或直接连管道的自动化脚本)。回调在后台线程触发,调用方负责调度 UI 线程。
+        /// </summary>
+        public Task ListenShowWindowAsync(CancellationToken cancellationToken, Action onShowMainWindow)
+            => this.ListenOnPipeAsync(ForceShowPipeName, "显示主界面", cancellationToken, onShowMainWindow);
+
+        private async Task ListenOnPipeAsync(
+            string pipeName, string label, CancellationToken cancellationToken, Action onSignal)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
                     using var server = new NamedPipeServerStream(
-                        RepeatLaunchPipeName,
+                        pipeName,
                         PipeDirection.In,
                         maxNumberOfServerInstances: 1,
                         PipeTransmissionMode.Byte,
                         PipeOptions.Asynchronous);
 
                     await server.WaitForConnectionAsync(cancellationToken);
-                    onRepeatLaunchRequested();
+                    onSignal();
                 }
                 catch (OperationCanceledException)
                 {
@@ -110,7 +150,7 @@ namespace DSH_Launcher.Services
                 catch (Exception ex)
                 {
                     // 监听异常不致命:稍后重建管道重试;退避一下,避免高频失败刷满 CPU
-                    AppLogService.Write($"[启动] 单实例管道监听异常: {ex.Message}");
+                    AppLogService.Write($"[启动] 单实例管道({label})监听异常: {ex.Message}");
                     try
                     {
                         await Task.Delay(1000, cancellationToken);

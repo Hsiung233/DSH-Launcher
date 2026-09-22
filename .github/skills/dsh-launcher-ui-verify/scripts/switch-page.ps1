@@ -15,6 +15,12 @@ param(
 # 4) 点击坐标取 ListItem 的 BoundingRectangle 中心。不要用同名的 Text 元素,
 #    实测它的矩形是错的(会点到窗口外)。
 # 5) 切页后控件是异步加载的,要轮询等待,不能固定 sleep。
+# 6) **主界面默认不出现**(应用设置 ShowMainWindowOnStartup=false,启动后可能只有一个 WebView 窗口 "DSH Web"):
+#    必须先唤起主界面。⚠ 不能靠"再启动一个实例"唤起 —— 已有实例按**"重复启动应用时"设置**响应,
+#    那项配成 WebView/无动作时(本机就是 WebView)主界面根本不出来。正解是连专用"显示主界面"命名管道
+#    (SingleInstanceGuard.ForceShowPipeName,收到连接就无条件 ShowMainWindow,与设置无关)。
+# 7) **"DSH Web" 窗口会盖在主窗口上抢走真实鼠标点击**,点导航前先把它收掉
+#    (发 WM_CLOSE,应用对关闭的处理是 Hide,WebView 会话保留、之后照常复用)。
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 
@@ -26,13 +32,37 @@ public class NavClick {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-  public const uint DOWN = 0x0002, UP = 0x0004;
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr l);
+  public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int m);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public const uint DOWN = 0x0002, UP = 0x0004, WM_CLOSE = 0x0010;
   public static void Click(int x, int y) {
     SetCursorPos(x, y);
     System.Threading.Thread.Sleep(150);
     mouse_event(DOWN, 0, 0, 0, UIntPtr.Zero);
     System.Threading.Thread.Sleep(80);
     mouse_event(UP, 0, 0, 0, UIntPtr.Zero);
+  }
+
+  // 关掉指定进程名下、指定标题的顶层窗口(用于收掉 "DSH Web")。
+  // 用 C# 内部回调而不是 PowerShell 脚本块转委托,免得踩编组的坑。
+  public static int CloseWindowsByTitle(uint pid, string title) {
+    var closed = 0;
+    EnumWindows((h, l) => {
+      uint p;
+      GetWindowThreadProcessId(h, out p);
+      if (p != pid) { return true; }
+      var sb = new System.Text.StringBuilder(256);
+      GetWindowText(h, sb, 256);
+      if (sb.ToString() == title) {
+        PostMessage(h, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        closed++;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return closed;
   }
 }
 '@
@@ -59,6 +89,19 @@ function Activate-AppWindow($win) {
     [void][NavClick]::ShowWindow($h, 9)          # SW_RESTORE
     [void][NavClick]::SetForegroundWindow($h)
     Start-Sleep -Milliseconds 700
+}
+
+# 收掉 "DSH Web"(WebView 窗口):它与主窗口同进程,盖在上面会抢走真实鼠标点击。
+# 应用对关闭的处理是 Hide(会话保留),之后复用照常,不影响验证。
+function Hide-DshWebWindow($win) {
+    $h = [IntPtr]$win.Current.NativeWindowHandle
+    $procId = [uint32]0
+    [void][NavClick]::GetWindowThreadProcessId($h, [ref]$procId)
+    $closed = [NavClick]::CloseWindowsByTitle($procId, 'DSH Web')
+    if ($closed -gt 0) {
+        Write-Host "已收掉 $closed 个 DSH Web 窗口(避免遮挡/抢点击)"
+        Start-Sleep -Milliseconds 500
+    }
 }
 
 function Get-NavItem($win, [string]$name) {
@@ -90,19 +133,43 @@ function Get-CurrentPage($win) {
 
 $win = Get-AppWindow
 if (-not $win) {
-    # 主界面可能被隐藏到托盘(ShowMainWindowOnStartup=false 时默认如此):
-    # 再启动一个实例,借助单实例机制通知已有实例显示主界面。
+    # 主界面默认不显示(ShowMainWindowOnStartup=false),先唤起:
+    # 连**专用"显示主界面"命名管道**(SingleInstanceGuard.ForceShowPipeName)——
+    # 已有实例收到连接就无条件 ShowMainWindow。⚠ 不要退回"再启动一个实例"的普通启动:
+    # 那条路按"重复启动应用时"设置响应,配成 WebView/无动作时主界面永远不会出来。
+    Write-Host '主界面未出现,唤起中...'
+    for ($i = 0; $i -lt 10 -and -not $win; $i++) {
+        try {
+            $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(
+                '.', 'DSH_Launcher_ForceShowWindow', [System.IO.Pipes.PipeDirection]::Out)
+            $pipe.Connect(1000)
+            $pipe.Dispose()
+        }
+        catch {
+            # 连接失败:应用没在跑,或监听方正处在"上一连接刚结束、重建中"的间隙,稍后重试
+        }
+        for ($j = 0; $j -lt 10 -and -not $win; $j++) {
+            Start-Sleep -Milliseconds 300
+            $win = Get-AppWindow
+        }
+    }
+}
+if (-not $win) {
+    # 兜底:应用可能根本没起来。带 --show-main-window 启动:
+    # 已有实例会收到管道通知并显示主界面(本次进程随即退出);没有实例时它自己就是主实例、直接显示主界面
     $exe = Join-Path $repoRoot 'DSH Launcher\bin\Debug\net10.0\DSH Launcher.exe'
     if (Test-Path $exe) {
-        Write-Host '主界面未出现,唤起中...'
-        Start-Process -FilePath $exe | Out-Null
+        Write-Host '管道未连上,改用 --show-main-window 启动兜底...'
+        Start-Process -FilePath $exe -ArgumentList '--show-main-window' | Out-Null
         for ($i = 0; $i -lt 20 -and -not $win; $i++) {
             Start-Sleep -Milliseconds 500
             $win = Get-AppWindow
         }
     }
 }
-if (-not $win) { Write-Host '无法获取主窗口'; exit 1 }
+if (-not $win) { Write-Host '无法获取主窗口(应用没在跑?或不是带 ForceShow 管道的新版)'; exit 1 }
+
+Hide-DshWebWindow $win
 
 Activate-AppWindow $win
 

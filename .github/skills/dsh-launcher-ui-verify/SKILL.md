@@ -28,7 +28,8 @@ user-invocable: true
 要点：
 
 - **GUI 常驻托盘**：用 `&` 或 `Start-Process` 启动（立即返回，不阻塞终端）；退出用 `Stop-Process` 或托盘菜单。
-- **单实例**：再启动一个实例 = 唤起已有实例的主界面（主界面默认隐藏到托盘，`ShowMainWindowOnStartup=false`）。
+- **单实例**：互斥体 `DSH_Launcher_SingleInstance` + 两条命名管道。`DSH_Launcher_ShowMainWindow` 是"重复启动"信号,已有实例按**「重复启动应用时」设置**响应(配成 WebView/无动作时**不会**弹主界面);`DSH_Launcher_ForceShowWindow` 是**无条件显示主界面**(与设置无关,`switch-page.ps1` 唤起走它,或带 `--show-main-window` 启动)。
+- **本机应用设置(2026-09-22 确认)**:`ShowMainWindowOnStartup=false` + `RunDshServiceOnStartup=true` + `RepeatLaunchAction=WebView` ⇒ 启动后**主界面不出现**,往往只有一个 WebView 窗口(`DSH Web`)。要操作界面必须先唤起主界面 —— ⚠ **别用"再启动一个实例"唤起**,那条路按设置响应(本机=开 WebView),主界面永远不出来(旧版脚本偶发成功是撞上服务未解析出地址的"回退打开主界面"分支)。
 - **改设置后需重启应用**才生效（设置只在启动时加载；除 `WebOpener` 的超时是每次现读）。
 - 构建前先 `Stop-Process -Name "DSH Launcher"`，否则 exe 被占用会报 `MSB3027`。
 - ⚠⚠ **先看清你要结束的是哪一个实例**：如果**当前会话本身**就是启动器拉起来的（典型情形：经由启动器的 WebView 与
@@ -57,7 +58,7 @@ Get-Process -Name "DSH Launcher" | Select-Object Id, Responding, MainWindowTitle
 pwsh -NoProfile -File ".github\skills\dsh-launcher-ui-verify\scripts\switch-page.ps1" -Page "设置"
 ```
 
-脚本会：唤起主界面（若在托盘）→ 激活窗口 → 按导航项矩形中心真实点击 → 轮询等待页面加载。
+脚本会：唤起主界面（连 `DSH_Launcher_ForceShowWindow` 管道,不受「重复启动应用时」设置影响;管道连不上时兜底 `--show-main-window` 启动）→ 收掉 `DSH Web` 窗口（防遮挡/抢点击）→ 激活窗口 → 按导航项矩形中心真实点击 → 轮询等待页面加载。
 
 **插件页内部的页签**用 [switch-tab.ps1](./scripts/switch-tab.ps1)（不需要真实点击，`SelectionItemPattern.Select()` 就有效）：
 
@@ -204,22 +205,20 @@ Get-Content "$env:LOCALAPPDATA\DSH Launcher\Settings\app.log" -Tail 8
 | `PluginsSubText` | Text | 页头 | **判断“当前在插件页”用它**（`Grid`/`ItemsControl` 这类 Panel 没有 UIA 对等体，查不到） |
 | `PnpmBadge` / `PnpmBadgeText` | Text | 页头 | pnpm 不可用时显示“pnpm 未就绪” |
 | `RevealProfileButton` / `RefreshPluginsButton` | Button | 页头 | 插件目录 / 刷新 |
-| `InstalledView` | Grid（**无 UIA 对等体**） | 已安装 | 两列布局容器（`Auto,*` 行:批量栏 + 两列）;判视图请用 `PluginsViewList` 的选中项 |
-| `SelectAllBox` | CheckBox（`Name=全选`） | 已安装·批量栏 | 全选/取消全选**当前可见**的条目（受筛选影响）。**CheckBox 只支持 `TogglePattern`，不支持 `InvokePattern`** |
-| `BatchCountText` | Text | 已安装·批量栏 | `未选择任何条目` 或 `已选 N 项 · 可启停 A · 可恢复 B · 可卸载 C` —— **拿到 A/B/C 就能断言按钮该不该可用** |
-| `BatchEnableButton` / `BatchDisableButton` | Button | 已安装·批量栏 | 批量写 `disabled: false/true`;选中项里没有可启停的时 **IsEnabled=false** |
-| `BatchResetButton` | Button | 已安装·批量栏 | 删除启停覆盖;没有 `HasOverride` 的选中项时禁用 |
-| `BatchUninstallButton` | Button | 已安装·批量栏 | 批量卸载（弹 `FAContentDialog` 确认）;没有可卸载项时禁用 |
-| 行内选择框 | CheckBox（**无 AutomationId**） | 两列列表行 | `IsChecked` 双向绑定在 `PluginEntry.IsSelected` 上。取行内选择框要用 `ControlType=CheckBox` 且**排除 `Name=全选`** |
-| `InstalledScroll` | Pane | 已安装 | 左列的已安装插件滚动区（可当“在已安装视图”的锚点） |
-| `InstalledPluginsList` | （Panel，无 UIA 对等体） | 已安装 | 已安装插件列表；行的按钮文案 `启用`/`禁用`、`恢复默认`、`卸载` |
-| `InstalledCountText` / `InstalledEmptyPanel` | Text / Panel | 已安装 | 已安装数量 / 空态提示 |
-| `GoToInstallTabButton` | Button | 已安装 | 空态里的「去安装新插件」,点了会切到第 2 个视图 |
-| `AllEntriesCard` | Border（**无 UIA 对等体**） | 已安装 | 右列「全部组合条目」卡片,**不再可折叠**(原先的 `AllEntriesExpander` 已删除) |
-| `AllEntriesScroll` | Pane | 已安装 | 右列组合条目的滚动区（可当“在已安装视图”的锚点） |
-| `AllEntriesCountText` | Text | 已安装 | 组合条目总数（实测 152） |
+| `InstalledView` | Grid（**无 UIA 对等体**） | 已安装 | 单列表布局容器（`Auto,*` 行:批量栏 + 「插件与条目」卡片）;判视图请用 `PluginsViewList` 的选中项 |
+| `SelectAllBox` | CheckBox（`Name=全选`） | 左栏（仅已安装视图，「批量操作」组） | 全选/取消全选**当前可见**的条目（受筛选影响）。**CheckBox 只支持 `TogglePattern`，不支持 `InvokePattern`**。2026-09-22 起批量控件从列表上方的批量栏挪进左栏 |
+| `BatchCountText` | Text | 左栏（仅已安装视图） | `未选择任何条目` 或 `已选 N 项 · 可启停 A · 可恢复 B · 可卸载 C` —— **拿到 A/B/C 就能断言按钮该不该可用**（窄栏里会换行） |
+| `BatchEnableButton` / `BatchDisableButton` | Button | 左栏（仅已安装视图，2×2 网格上排） | 批量写 `disabled: false/true`;选中项里没有可启停的时 **IsEnabled=false** |
+| `BatchResetButton` | Button | 左栏（仅已安装视图，2×2 网格下排左） | 删除启停覆盖;没有 `HasOverride` 的选中项时禁用 |
+| `BatchUninstallButton` | Button | 左栏（仅已安装视图，2×2 网格下排右） | 批量卸载（弹 `FAContentDialog` 确认）;没有可卸载项时禁用 |
+| 行内选择框 | CheckBox（**无 AutomationId**） | 列表行 | `IsChecked` 双向绑定在 `PluginEntry.IsSelected` 上。取行内选择框要用 `ControlType=CheckBox` 且**排除 `Name=全选`** |
+| `InstalledEmptyPanel` / `GoToInstallTabButton` | Panel / Button | 已安装 | 没装任何插件时的空态提示 /「去安装新插件」按钮(点了切到第 2 个视图) |
+| `AllEntriesCard` | Border（**无 UIA 对等体**） | 已安装 | 「插件与条目」卡片(单列表;原先的「已安装」「全部组合条目」两列已合并) |
+| `AllEntriesScroll` | Pane | 已安装 | 单列表滚动区（可当“在已安装视图”的锚点） |
+| `AllEntriesCountText` | Text | 已安装 | 计数文本:`已安装 N 个插件 · 共 M 条`,或(被默认收起/筛选时)`已安装 N 个插件 · 显示 X 条 / 共 M 条`(实测共 153) |
+| `ShowAllEntriesBox` | CheckBox(`Name=显示全部`) | 已安装·卡片头 | 「显示全部」开关,**默认 Off** = 列表只显示已安装插件的条目与有启停覆盖的条目(自带条目默认收起);勾选后显示全部。**只支持 `TogglePattern`**。筛选框有内容时始终搜全部,不受它影响 |
 | `EntryFilterBox` | Edit | 左栏（仅已安装视图） | 按包名/条目 id 筛选；**要操作某一行必须先靠它缩窄列表**(列表已虚拟化,屏幕外的行不在 UIA 树里)。**已从卡片标题栏挪到左栏** |
-| `AllEntriesList` | ItemsControl（**无 UIA 对等体**） | 已安装 | 已虚拟化:任何时刻 UIA 里只有可视区域的那几行（实测 8 行/152 条） |
+| `AllEntriesList` | ItemsControl（**无 UIA 对等体**） | 已安装 | 单列表(操作面 + 诊断),已虚拟化:任何时刻 UIA 里只有可视区域的那几行（实测 8 行/153 条） |
 | `InstallView` | Grid（**无 UIA 对等体**） | 安装新插件 | 搜索行 + 目录列表卡的容器 |
 | `CatalogSearchBox` | Edit | 安装新插件 | 搜索目录(包名/作者/描述),**改文本即过滤**(不用回车) |
 | `CatalogCategoryCombo` | ComboBox | 左栏（仅安装视图） | 分类过滤;项是运行时按目录填的(第一项=`全部分类`),**用 `SelectionItemPattern.Select()` 选** |
@@ -392,7 +391,7 @@ Get-Content "$env:LOCALAPPDATA\DSH Launcher\Settings\app.log" -Tail 8
     而不是 `PluginLogFlyout`）。
 19. **虚拟化列表里只有可视行在 UIA 树里**（插件页三个列表都是）。所以：UIA 里的元素个数**不等于**数据条数；
     要点击屏幕外某一行，必须先用筛选框缩窄，或把列表滚到那一行。
-    自查方法：读 `AllEntriesCountText`（“共 152 条”）对照 UIA 里实际的行数。
+    自查方法：读 `AllEntriesCountText`（`共 N 条` / `显示 N 条 / 共 M 条`）对照 UIA 里实际的行数。
 20. **不要用 `SendKeys` 去发按键收弹层**：它会把按键广播给当前活动窗口，不可控。（曾误以为按 Esc 会让应用跳回首页，
     后来用 `keybd_event` 精确复测 —— 应用里**根本没有** `Key.Escape` 处理，Esc 在浮窗关闭时按下去毫无反应，
     当时的“跳回首页”是误判。要发按键就用 `keybd_event`/`SendInput`，且先把目标窗口置顶。
