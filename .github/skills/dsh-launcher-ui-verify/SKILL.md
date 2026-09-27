@@ -21,7 +21,7 @@ user-invocable: true
 | 项 | 值 |
 |---|---|
 | 构建 | `dotnet build "DSH Launcher.slnx"` |
-| 可执行文件 | `DSH Launcher/bin/Debug/net10.0/DSH Launcher.exe` |
+| 可执行文件 | `src\DSH Launcher/bin/Debug/net10.0/DSH Launcher.exe` |
 | 设置 | `%APPDATA%\DSH Launcher\Settings\settings.json` |
 | 日志 | `%LOCALAPPDATA%\DSH Launcher\Settings\app.log` |
 
@@ -45,7 +45,7 @@ user-invocable: true
 ```powershell
 Stop-Process -Name "DSH Launcher" -Force -ErrorAction SilentlyContinue
 dotnet build "DSH Launcher.slnx" 2>&1 | Select-Object -Last 5
-& "DSH Launcher\bin\Debug\net10.0\DSH Launcher.exe"
+& "src\DSH Launcher\bin\Debug\net10.0\DSH Launcher.exe"
 Start-Sleep -Seconds 9
 Get-Process -Name "DSH Launcher" | Select-Object Id, Responding, MainWindowTitle
 ```

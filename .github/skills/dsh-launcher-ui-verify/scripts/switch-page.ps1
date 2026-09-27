@@ -157,7 +157,7 @@ if (-not $win) {
 if (-not $win) {
     # 兜底:应用可能根本没起来。带 --show-main-window 启动:
     # 已有实例会收到管道通知并显示主界面(本次进程随即退出);没有实例时它自己就是主实例、直接显示主界面
-    $exe = Join-Path $repoRoot 'DSH Launcher\bin\Debug\net10.0\DSH Launcher.exe'
+    $exe = Join-Path $repoRoot 'src\DSH Launcher\bin\Debug\net10.0\DSH Launcher.exe'
     if (Test-Path $exe) {
         Write-Host '管道未连上,改用 --show-main-window 启动兜底...'
         Start-Process -FilePath $exe -ArgumentList '--show-main-window' | Out-Null

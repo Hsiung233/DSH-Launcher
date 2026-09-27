@@ -154,8 +154,7 @@ namespace DSH_Launcher.Services
         /// <see cref="WebViewAdapterType.WkWebView"/> 在 macOS(10.10+)恒可用。
         /// 应用内 <see cref="NativeWebView"/> 正是按同样的平台顺序自动选择适配器,两处保持一致。
         /// </summary>
-        private static WebViewAdapterType CurrentAdapterType =>
-            PlatformProcess.IsWindows ? WebViewAdapterType.WebView2 : WebViewAdapterType.WkWebView;
+        private static WebViewAdapterType CurrentAdapterType => PlatformProcess.IsWindows ? WebViewAdapterType.WebView2 : WebViewAdapterType.WkWebView;
 
         /// <summary>当前平台 WebView 引擎的展示名(仅用于界面文案/日志)。</summary>
         public static string EngineDisplayName => PlatformProcess.IsWindows ? "WebView2" : "WKWebView";

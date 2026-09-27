@@ -1,14 +1,22 @@
 ; DSH Launcher 安装包脚本(Inno Setup 7,兼容 6)
+;
+; ⚠ 本脚本在 tools\BuildSetup\ 下,而**产物落在仓库根的 setup\ 里**(见下面的 OutputDir)。
+;   这么分是有意的:setup\ 只放"给人拿走的东西"(安装包),脚本与语言文件属于构建资料。
+;
 ; 使用前先发布应用:
-;   dotnet publish "DSH Launcher\DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
-; 然后用 Inno Setup Compiler 打开本脚本编译,输出本目录(Setup\)下的 DSHLauncher-Setup-x64.exe
+;   dotnet publish "src\DSH Launcher\DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
+; 然后用 Inno Setup Compiler 打开本脚本编译(或跑 ..\..\Build-Installer.ps1),
+; 产物是 setup\DSHLauncher-Setup-x64.exe。
 ; 安装程序会检测 .NET 10 Desktop Runtime,缺失时引导用户到官网下载。
+;
+; ⚠ 下面所有相对路径都是相对**本文件所在目录**(Inno 内部称 SourceDir)解析的,
+;   所以从旧位置搬过来时每一条都跟着多退了两层 —— 改路径前先确认这一点。
 
 #define MyAppName "DSH Launcher"
 #define MyAppNameNoSpace "DSHLauncher"
 #define MyAppPublisher "DSH Launcher"
 #define MyAppExeName "DSH Launcher.exe"
-#define MyPublishDir "..\DSH Launcher\bin\Publish\DSH Launcher_Windows_x64"
+#define MyPublishDir "..\..\src\DSH Launcher\bin\Publish\DSH Launcher_Windows_x64"
 #define MyAppVersion GetVersionNumbersString(MyPublishDir + "\" + MyAppExeName)
 #if MyAppVersion == ""
 #define MyAppVersion "1.0.0"
@@ -27,8 +35,8 @@ DefaultDirName={autopf}\{#MyAppNameNoSpace}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; 相对路径的 OutputDir 是相对【脚本所在目录】(Inno 内部称 SourceDir)解析的,
-; 所以这里写 "." 才会落在 Setup\ 下 —— 直接写 "Setup" 会变成 Setup\Setup\。
-OutputDir=.
+; 这里写 ..\..\setup,产物落在仓库根的 setup\ 下(与分层后的目录布局一致)。
+OutputDir=..\..\setup
 OutputBaseFilename={#MyAppNameNoSpace}-Setup-x64
 Compression=lzma2
 SolidCompression=yes
@@ -37,10 +45,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 ; 桌面快捷方式不强制勾选
 ChangesAssociations=no
-LicenseFile=..\LICENSE
+LicenseFile=..\..\LICENSE
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; 图标已嵌入程序集,发布目录不再有 Assets\logo.ico,这里直接取仓库源码里的 ico
-SetupIconFile=..\DSH Launcher\Assets\logo.ico
+SetupIconFile=..\..\src\DSH Launcher\Assets\logo.ico
 ; 按用户安装(免管理员):装到 %LOCALAPPDATA%\Programs\DSHLauncher,与用户设置(%APPDATA%)一致
 PrivilegesRequired=lowest
 ; 应用是常驻托盘的"单实例"程序,启动时持有命名 Mutex(见 App.axaml.cs: SingleInstanceMutexName)。
@@ -49,7 +57,7 @@ PrivilegesRequired=lowest
 AppMutex=DSH_Launcher_SingleInstance
 
 [Languages]
-; 中文语言文件随仓库走(Setup\Languages\),不依赖 Inno Setup 安装目录里是否带它 ——
+; 中文语言文件随仓库走(tools\BuildSetup\Languages\),不依赖 Inno Setup 安装目录里是否带它 ——
 ; CI(Runner 上 choco 装的 Inno Setup)就没有这个文件,用 compiler: 前缀会直接编译失败。
 ; 相对路径以 .iss 所在目录为基准。
 Name: "chinesesimplified"; MessagesFile: "Languages\ChineseSimplified.isl"

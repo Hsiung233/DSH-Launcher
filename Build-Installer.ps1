@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    编译 Setup\installer.iss,生成 Setup\DSHLauncher-Setup-x64.exe。
+    编译 tools\BuildSetup\installer.iss,产物落在仓库根的 setup\DSHLauncher-Setup-x64.exe。
 
 .DESCRIPTION
     默认先把应用发布一遍(调用根目录的 Build-Publish.ps1),再用 Inno Setup 的命令行编译器 ISCC
@@ -38,9 +38,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# 脚本在仓库根目录;installer.iss 及它内部相对路径的基准仍是 Setup\
+# 脚本在仓库根目录;installer.iss 在 tools\BuildSetup\ 下,它内部的相对路径是相对
+# 脚本自身目录(tools\BuildSetup\,Inno 内部称 SourceDir 的基准)解析的,不是仓库根 ——
+# 头部注释里也写明了这一点。产物目录 ..\..\setup 由本脚本负责创建。
 $repoRoot = $PSScriptRoot
-$setupDir = Join-Path $repoRoot 'Setup'
+$setupDir = Join-Path $repoRoot 'tools\BuildSetup'
 $issPath = Join-Path $setupDir 'installer.iss'
 $publishScript = Join-Path $repoRoot 'Build-Publish.ps1'
 
@@ -142,7 +144,7 @@ if (-not $myPublishDir -or -not $myAppExeName) {
     throw "$issPath 里读不到 MyPublishDir / MyAppExeName,脚本无法确认打包源。"
 }
 
-# installer.iss 里的相对路径(Inno 内部规则)是相对【.iss 所在目录,即 Setup\】解析的
+# installer.iss 里的相对路径(Inno 内部规则)是相对【.iss 所在目录,即 tools\BuildSetup\】解析的
 $sourceDir = if ([IO.Path]::IsPathRooted($myPublishDir)) {
     [IO.Path]::GetFullPath($myPublishDir)
 } else {
@@ -160,6 +162,12 @@ if (-not $outputDir -or $outputDir -eq '.') {
 }
 $installerDir = $installerDir.TrimEnd('\')
 
+# 产物目录不进版本库(.gitignore 的 /setup/*.exe),全新克隆里它不存在 ——
+# 自己建好,别让 ISCC 或后面的校验因为"目录没有"而报一个看不懂的错。
+if (-not (Test-Path -LiteralPath $installerDir)) {
+    New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
+    Write-Host "已创建产物目录: $installerDir"
+}
 # OutputBaseFilename 引用了 {#MyAppNameNoSpace},这里就地展开成实际文件名
 $outputBaseFilename = Get-IssDirective -Text $issText -Name 'OutputBaseFilename'
 if (-not $outputBaseFilename) { throw "$issPath 里读不到 OutputBaseFilename。" }

@@ -20,6 +20,12 @@ namespace DSH_Launcher.Views
         // 启动失败弹窗互斥标志:内容对话框同时只能打开一个
         private bool _startFailedDialogOpen;
 
+        // Node.js 缺失弹窗互斥标志:内容对话框同时只能打开一个
+        private bool _nodeMissingDialogOpen;
+
+        // Node.js 官网中文下载页(「前往官网下载」按钮的目标)
+        private const string NodeDownloadUrl = "https://nodejs.org/zh-cn/download";
+
         // 端口控件回填期间置位,避免把“回填”当成用户修改而触发保存
         private bool _launchOptionsInitializing;
 
@@ -280,6 +286,12 @@ namespace DSH_Launcher.Views
 
         private async void OnInstallClick(object? sender, RoutedEventArgs e)
         {
+            // npm 安装前先确认 Node.js 环境:缺失时弹窗引导去官网下载,不执行安装
+            if (!await this.EnsureNodeEnvironmentAsync())
+            {
+                return;
+            }
+
             this.HeaderProgress.IsActive = true;
             try
             {
@@ -295,6 +307,12 @@ namespace DSH_Launcher.Views
         /// <summary>更新到 npm 上的最新版本;完成后重新检查,按钮随之消失。</summary>
         private async void OnUpdateClick(object? sender, RoutedEventArgs e)
         {
+            // 更新同样是 npm install -g,装前一样要确认 Node.js 环境
+            if (!await this.EnsureNodeEnvironmentAsync())
+            {
+                return;
+            }
+
             this.HeaderProgress.IsActive = true;
             try
             {
@@ -304,6 +322,80 @@ namespace DSH_Launcher.Views
             finally
             {
                 this.HeaderProgress.IsActive = false;
+            }
+        }
+
+        /// <summary>
+        /// npm 安装(dsh)前的 Node.js 环境检查:缺失时弹「前往官网下载 / 确定」弹窗并返回 false,不执行安装。
+        /// </summary>
+        private async Task<bool> EnsureNodeEnvironmentAsync()
+        {
+            this.HeaderProgress.IsActive = true;
+            bool ok;
+            try
+            {
+                ok = await this._dsh.HasNodeEnvironmentAsync();
+            }
+            finally
+            {
+                this.HeaderProgress.IsActive = false;
+            }
+
+            if (!ok)
+            {
+                await this.ShowNodeMissingDialogAsync();
+            }
+
+            return ok;
+        }
+
+        /// <summary>
+        /// 未检测到 Node.js 环境时的提示弹窗:「前往官网下载」在浏览器打开 Node.js 官网下载页,
+        /// 「确定」只关闭弹窗。两个按钮都会关闭弹窗(内容对话框的按钮行为),区别只是要不要顺带开浏览器。
+        /// </summary>
+        private async Task ShowNodeMissingDialogAsync()
+        {
+            // 内容对话框同时只能打开一个,防重入
+            if (this._nodeMissingDialogOpen)
+            {
+                return;
+            }
+
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel is not Window ownerWindow)
+            {
+                return;
+            }
+
+            this._nodeMissingDialogOpen = true;
+            try
+            {
+                var dialog = new FAContentDialog
+                {
+                    Title = "未检测到 Node.js 环境",
+                    Content = new SelectableTextBlock
+                    {
+                        Text = "安装 @deepseek-ai/dsh 需要 Node.js(自带 npm)。当前电脑上未检测到可用的 Node.js 环境,"
+                            + "请先前往 Node.js 官网下载安装,完成后再回来重试安装。",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    PrimaryButtonText = "前往官网下载",
+                    CloseButtonText = "确定",
+                };
+
+                var result = await dialog.ShowAsync(ownerWindow);
+                if (result == FAContentDialogResult.Primary)
+                {
+                    BrowserLauncher.OpenInBrowser(NodeDownloadUrl);
+                }
+            }
+            catch (Exception)
+            {
+                // 极端情况下(如页面正在卸载)ShowAsync 可能抛异常,忽略以免崩溃
+            }
+            finally
+            {
+                this._nodeMissingDialogOpen = false;
             }
         }
 

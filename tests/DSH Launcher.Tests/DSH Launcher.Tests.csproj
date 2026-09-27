@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DSH Launcher\DSH Launcher.csproj" />
+    <ProjectReference Include="..\..\src\DSH Launcher\DSH Launcher.csproj" />
   </ItemGroup>
 
 </Project>

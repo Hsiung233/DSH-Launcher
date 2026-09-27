@@ -820,6 +820,25 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
+        /// 检测 Node.js 环境是否可用:node 与 npm 两个命令都能跑出版本号才算可用。
+        /// <para>
+        /// 为什么要在 npm 安装前先探一次:没有 Node.js 时 <c>npm install -g</c> 只会输出
+        /// cmd 的「不是内部或外部命令」,用户看不懂;由界面弹窗引导去官网下载更直接。
+        /// npm 虽随 Node.js 附带,但存在「装了 node、npm 残缺」的环境,所以两个都探。
+        /// </para>
+        /// </summary>
+        public async Task<bool> HasNodeEnvironmentAsync()
+        {
+            var node = await TryCaptureFirstLineAsync("node --version");
+            var npm = node is null ? null : await TryCaptureFirstLineAsync("npm --version");
+            var ok = node is not null && npm is not null;
+            this.AppendSystemLog(ok
+                ? $"[环境] npm 安装前检测通过:Node.js {node} / npm {npm}"
+                : "[环境] npm 安装前检测:未检测到可用的 Node.js 环境(node/npm 命令不可用)");
+            return ok;
+        }
+
+        /// <summary>
         /// 查询用于排查启动问题的环境信息:Node / npm 版本、dsh 命令路径。
         /// 任一项查不到时返回 null(界面显示为未知),不抛异常。
         /// </summary>

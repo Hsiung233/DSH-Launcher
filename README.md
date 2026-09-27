@@ -119,7 +119,7 @@ WinUI 卡片式设置页，分四组：
 dotnet build "DSH Launcher.slnx"
 
 # 运行（开发调试）
-dotnet run --project "DSH Launcher/DSH Launcher.csproj"
+dotnet run --project "src/DSH Launcher/DSH Launcher.csproj"
 ```
 
 > 构建前建议先结束正在运行的实例（`Stop-Process -Name "DSH Launcher"`），否则输出程序集可能被占用。
@@ -131,14 +131,14 @@ dotnet run --project "DSH Launcher/DSH Launcher.csproj"
 ### 运行测试
 
 ```powershell
-dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj"
+dotnet test "tests/DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 ```
 
 测试项目覆盖的是**不依赖界面的纯逻辑**：版本比较、日志限长与裁剪、`cordis.patch.yml` 托管区块读写、两份社区目录的解析与筛选排序、**目录加载的并发时序**（慢的旧来源不得覆盖新来源、缓存命中要顶掉在飞请求）、`dsh --dump-config` 输出解析、子进程输出编码判定、设置 JSON 与宽容枚举解析、插件条目的界面状态、启动失败提示、开机自启动项的格式（Windows Run 命令行的引号与反解析、plist / .desktop 正文、XML 转义）、`--autostart` 标记识别、自启动对齐决策表与状态提示文案。这些都是注释里写满"实测踩过的坑"的地方，也正是重构中最容易被静默改坏的地方。
 
 > 若本机访问不到 nuget.org，测试包（MSTest）可从 Visual Studio 自带的离线包源还原：
 > ```powershell
-> dotnet restore "DSH Launcher.Tests/DSH Launcher.Tests.csproj" --source "C:\Program Files (x86)\Microsoft SDKs\NuGetPackages"
+> dotnet restore "tests/DSH Launcher.Tests/DSH Launcher.Tests.csproj" --source "C:\Program Files (x86)\Microsoft SDKs\NuGetPackages"
 > ```
 
 > **构建排错**：Avalonia 的构建期遥测任务会往 `%LOCALAPPDATA%\AvaloniaUI` 写日志，写不进去会让构建以 `MSB4018` 直接失败。
@@ -156,7 +156,7 @@ dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 # 发布 + 编译安装包，一步到位
 .\Build-Installer.ps1
 
-# 只发布（输出到 DSH Launcher\bin\Publish\DSH Launcher_Windows_x64）
+# 只发布（输出到 src\DSH Launcher\bin\Publish\DSH Launcher_Windows_x64）
 .\Build-Publish.ps1
 ```
 
@@ -166,15 +166,15 @@ dotnet test "DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 
 `Build-Installer.ps1` 默认先调用 `Build-Publish.ps1`（`-NoPublish` 可跳过），自动查找 `ISCC.exe`
 （`-ISCC` → PATH → 注册表 → 常见安装位置），并在编译前校验 `installer.iss` 的 `MyPublishDir` 里
-确实有程序文件，最后产出 `Setup\DSHLauncher-Setup-x64.exe`（同时打印文件大小与 SHA256）。
+确实有程序文件,最后产出 `setup\DSHLauncher-Setup-x64.exe`（同时打印文件大小与 SHA256）。
 
 不用脚本的等价手工步骤：
 
 ```powershell
-dotnet publish "DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
+dotnet publish "src/DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
 ```
 
-再用 Inno Setup 的 IDE 打开 `Setup/installer.iss` 编译（或 `ISCC.exe Setup\installer.iss`）。
+再用 Inno Setup 的 IDE 打开 `tools/BuildSetup/installer.iss` 编译（或 `ISCC.exe "tools\BuildSetup\installer.iss"`），产物落在仓库根的 `setup\` 下。
 发布为框架依赖版，要求用户机器已装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
 
 安装程序内置 .NET 10 Desktop Runtime 检测：缺失时引导用户到官网下载后再装；支持中文向导、
@@ -197,7 +197,7 @@ DSH Launcher.slnx                 解决方案（.slnx 格式；测试项目暂�
 global.json                       .NET SDK 版本（CI 与本地一致）
 Directory.Build.props             全仓库共用的编译设置（语言版本、可空性、分析器、可复现构建）
 .editorconfig                     代码风格基线
-DSH Launcher/
+src/DSH Launcher/                 主程序
   App.axaml(.cs)                  应用入口：主题、托盘、单实例、退出清理
   Program.cs                      程序入口
   app.manifest                    Windows 清单（DPI 感知等）
@@ -238,7 +238,7 @@ DSH Launcher/
     AppLogService.cs              应用日志文件
     AppIcon.cs                    嵌入图标资源的加载
   Properties/PublishProfiles/     dotnet publish 发布配置（DSH Launcher_Windows_x64）
-DSH Launcher.Tests/               单元测试（MSTest，覆盖上表中的纯逻辑）
+tests/DSH Launcher.Tests/         单元测试（MSTest，覆盖上表中的纯逻辑）
   LogBufferTests.cs               日志限长与裁剪
   VersionComparisonTests.cs       版本比较
   PluginPatchFileTests.cs         cordis.patch.yml 托管区块读写
@@ -253,10 +253,12 @@ DSH Launcher.Tests/               单元测试（MSTest，覆盖上表中的纯�
   PluginEntryTests.cs             插件条目的界面状态（勾选、待确认卸载）
   AutoStartTests.cs               自启动项格式、`--autostart` 标记、对齐决策表与状态提示文案
 
-Build-Publish.ps1                 发布到 bin/Publish 的脚本（清空旧产物、结束运行中的实例）
+Build-Publish.ps1                 发布到 src\DSH Launcher\bin\Publish 的脚本（清空旧产物、结束运行中的实例）
 Build-Installer.ps1               先调 Build-Publish.ps1 发布，再用 Inno Setup 编译安装包
-Setup/
+tools/BuildSetup/                 安装包脚本（产物落仓库根 setup\）
   installer.iss                   Inno Setup 安装包脚本
+  Languages/ChineseSimplified.isl 中文向导语言文件
+setup/                            安装包产物目录（不进版本库，全新克隆里不存在）
 docs/screenshots/                 README 中使用的界面截图
 .github/workflows/build.yml       CI：Release 构建 + 跑测试
 .github/skills/                   仓库自带的界面验证 skill（UI Automation，见 SKILL.md）

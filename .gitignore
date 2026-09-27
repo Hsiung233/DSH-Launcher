@@ -1,8 +1,8 @@
 # 工具/IDE 的本地状态
 .commandcode
 .vs
-/DSH Launcher/.commandcode
-/DSH Launcher/.vscode
+/src/DSH Launcher/.commandcode
+/src/DSH Launcher/.vscode
 
 # 构建产物:按目录名忽略,新增项目(测试等)自动覆盖,不必逐个目录追加
 [Bb]in/
@@ -12,5 +12,12 @@
 *.user
 *.suo
 
-# Inno Setup 安装包产物(Setup\installer.iss 的 OutputDir)
-/Setup/*.exe
+# Inno Setup 安装包产物(tools/BuildSetup/installer.iss 的 OutputDir 指向这里)。
+# setup/ 是**产物目录**,只放给人拿走的东西;脚本与语言文件在 tools/BuildSetup/ 下。
+# 该目录在全新克隆里不存在,由 Build-Installer.ps1 / ISCC 自己创建。
+#
+# ⚠ 这里的目录名必须与 installer.iss 的 OutputDir **逐字大小写一致**(都小写)。
+#   原因:git 的忽略匹配在 core.ignoreCase=true 的平台上不分大小写(Windows/macOS 默认如此),
+#   但 Linux 上 core.ignoreCase=false 就**区分大小写** —— 大小写对不上就会漏掉,
+#   安装包会被误提交进仓库。别图省事混用。
+/setup/*.exe

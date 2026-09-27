@@ -42,7 +42,7 @@ $appExeName = 'DSH Launcher.exe'
 
 # 脚本在仓库根目录
 $repoRoot    = $PSScriptRoot
-$projectDir  = Join-Path $repoRoot 'DSH Launcher'
+$projectDir  = Join-Path $repoRoot 'src\DSH Launcher'
 $csproj      = Join-Path $projectDir 'DSH Launcher.csproj'
 $profilePath = Join-Path $projectDir "Properties\PublishProfiles\$PublishProfile.pubxml"
 
