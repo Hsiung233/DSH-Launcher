@@ -69,7 +69,7 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}".TrimStart('v')
-          $exe = "src/DSH Launcher/bin/Publish/DSH Launcher_Windows_x64/DSH Launcher.exe"
+          $exe = "src/DSH Launcher/bin/Publish/win_x64/DSH Launcher.exe"
           if (-not (Test-Path $exe)) { throw "找不到发布产物 $exe(发布步骤未执行?)" }
           $ver = (Get-Item $exe).VersionInfo.FileVersion
           Write-Host "tag=$tag exe=$ver"

@@ -4,7 +4,7 @@
 ;   这么分是有意的:setup\ 只放"给人拿走的东西"(安装包),脚本与语言文件属于构建资料。
 ;
 ; 使用前先发布应用:
-;   dotnet publish "src\DSH Launcher\DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
+;   dotnet publish "src\DSH Launcher\DSH Launcher.csproj" -p:PublishProfile="win_x64" -c Release
 ; 然后用 Inno Setup Compiler 打开本脚本编译(或跑 ..\..\Build-Installer.ps1),
 ; 产物是 setup\DSHLauncher-Setup-x64.exe。
 ; 安装程序会检测 .NET 10 Desktop Runtime,缺失时引导用户到官网下载。
@@ -16,7 +16,7 @@
 #define MyAppNameNoSpace "DSHLauncher"
 #define MyAppPublisher "DSH Launcher"
 #define MyAppExeName "DSH Launcher.exe"
-#define MyPublishDir "..\..\src\DSH Launcher\bin\Publish\DSH Launcher_Windows_x64"
+#define MyPublishDir "..\..\src\DSH Launcher\bin\Publish\win_x64"
 #define MyAppVersion GetVersionNumbersString(MyPublishDir + "\" + MyAppExeName)
 #if MyAppVersion == ""
 #define MyAppVersion "1.0.0"

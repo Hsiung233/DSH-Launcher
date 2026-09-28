@@ -126,7 +126,7 @@ dotnet run --project "src/DSH Launcher/DSH Launcher.csproj"
 > ⚠ 但如果你的**当前工作会话**（例如 `dsh web` + 浏览器/WebView）正是这个启动器拉起来的，结束它会连带结束那个会话 ——
 > 这种情况请先确认会话可以从别处恢复，或改用另一个构建输出目录。
 
-发行版另附 `Properties/PublishProfiles/DSH Launcher_Windows_x64.pubxml` 发布配置。
+发行版另附 `Properties/PublishProfiles/win_x64.pubxml` 发布配置。
 
 ### 运行测试
 
@@ -156,7 +156,7 @@ dotnet test "tests/DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 # 发布 + 编译安装包，一步到位
 .\Build-Installer.ps1
 
-# 只发布（输出到 src\DSH Launcher\bin\Publish\DSH Launcher_Windows_x64）
+# 只发布（输出到 src\DSH Launcher\bin\Publish\win_x64）
 .\Build-Publish.ps1
 ```
 
@@ -171,7 +171,7 @@ dotnet test "tests/DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 不用脚本的等价手工步骤：
 
 ```powershell
-dotnet publish "src/DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="DSH Launcher_Windows_x64" -c Release
+dotnet publish "src/DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="win_x64" -c Release
 ```
 
 再用 Inno Setup 的 IDE 打开 `tools/BuildSetup/installer.iss` 编译（或 `ISCC.exe "tools\BuildSetup\installer.iss"`），产物落在仓库根的 `setup\` 下。
@@ -237,7 +237,7 @@ src/DSH Launcher/                 主程序
     LogBuffer.cs                  有上限的日志缓冲区（防面板假死）
     AppLogService.cs              应用日志文件
     AppIcon.cs                    嵌入图标资源的加载
-  Properties/PublishProfiles/     dotnet publish 发布配置（DSH Launcher_Windows_x64）
+  Properties/PublishProfiles/     dotnet publish 发布配置（win_x64）
 tests/DSH Launcher.Tests/         单元测试（MSTest，覆盖上表中的纯逻辑）
   LogBufferTests.cs               日志限长与裁剪
   VersionComparisonTests.cs       版本比较
