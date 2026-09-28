@@ -35,6 +35,15 @@ namespace DSH_Launcher.Services
         /// <summary>托盘右键菜单“浏览器中打开”。</summary>
         public event Action? BrowserOpenRequested;
 
+        /// <summary>托盘右键菜单“启动服务”(dsh 服务未运行时显示)。</summary>
+        public event Action? StartServiceRequested;
+
+        /// <summary>托盘右键菜单“停止服务”(dsh 服务运行中时显示)。</summary>
+        public event Action? StopServiceRequested;
+
+        /// <summary>托盘右键菜单“重启服务”(dsh 服务运行中时显示)。</summary>
+        public event Action? RestartServiceRequested;
+
         public event Action? ExitRequested;
 
         /// <summary>
@@ -50,15 +59,16 @@ namespace DSH_Launcher.Services
         /// <summary>认为平台返回值可信的上限(毫秒);超出则当作异常值,退回默认值。</summary>
         private const double MaxDoubleClickTimeMs = 5000;
 
-        private TrayService(string tip)
+        private TrayService(string tip, bool serviceRunning)
         {
             _trayIcon = new TrayIcon
             {
                 Icon = LoadIcon(),
                 ToolTipText = tip,
                 IsVisible = true,
-                Menu = BuildMenu(),
+                Menu = BuildMenu(serviceRunning),
             };
+            _serviceRunning = serviceRunning;
 
             _trayIcon.Clicked += OnTrayClicked;
 
@@ -73,11 +83,11 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>创建托盘图标;失败时返回 null(不影响主功能)。</summary>
-        public static TrayService? TryCreate(string tip)
+        public static TrayService? TryCreate(string tip, bool serviceRunning)
         {
             try
             {
-                return new TrayService(tip);
+                return new TrayService(tip, serviceRunning);
             }
             catch (Exception)
             {
@@ -85,12 +95,42 @@ namespace DSH_Launcher.Services
             }
         }
 
-        private NativeMenu BuildMenu()
+        private bool _serviceRunning;
+
+        /// <summary>
+        /// 按服务运行状态刷新托盘菜单:运行中显示“停止服务/重启服务”,未运行显示“启动服务”。
+        /// 直接替换整个 Menu(而不是逐项增删),NativeMenu 没有可靠的逐项刷新通知,
+        /// 整体替换在 Windows 上会触发托盘菜单重建,行为最稳。需在 UI 线程调用。
+        /// </summary>
+        public void SetServiceRunning(bool running)
+        {
+            if (_trayIcon is null || running == _serviceRunning)
+            {
+                return;
+            }
+
+            _serviceRunning = running;
+            _trayIcon.Menu = BuildMenu(running);
+        }
+
+        private NativeMenu BuildMenu(bool serviceRunning)
         {
             var menu = new NativeMenu();
             menu.Items.Add(CreateItem("打开界面", () => MainWindowRequested?.Invoke()));
-            menu.Items.Add(CreateItem("WebView中打开", () => WebViewOpenRequested?.Invoke()));
-            menu.Items.Add(CreateItem("浏览器中打开", () => BrowserOpenRequested?.Invoke()));
+            if (serviceRunning)
+            {
+                // 服务未运行时 Web 地址不可用,这两项没有意义(点击也只会回退到主界面),直接不显示
+                menu.Items.Add(CreateItem("WebView中打开", () => WebViewOpenRequested?.Invoke()));
+                menu.Items.Add(CreateItem("浏览器中打开", () => BrowserOpenRequested?.Invoke()));
+                menu.Items.Add(new NativeMenuItemSeparator());
+                menu.Items.Add(CreateItem("停止服务", () => StopServiceRequested?.Invoke()));
+                menu.Items.Add(CreateItem("重启服务", () => RestartServiceRequested?.Invoke()));
+            }
+            else
+            {
+                menu.Items.Add(new NativeMenuItemSeparator());
+                menu.Items.Add(CreateItem("启动服务", () => StartServiceRequested?.Invoke()));
+            }
             menu.Items.Add(new NativeMenuItemSeparator());
             menu.Items.Add(CreateItem("退出程序", () => ExitRequested?.Invoke()));
             return menu;

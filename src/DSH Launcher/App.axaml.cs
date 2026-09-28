@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using DSH_Launcher.Models;
 using DSH_Launcher.Services;
 using DSH_Launcher.Views;
@@ -275,7 +276,7 @@ public partial class App : Application
 
     private void InitializeTrayIcon()
     {
-        _tray = TrayService.TryCreate("DSH Launcher");
+        _tray = TrayService.TryCreate("DSH Launcher", DshService.Instance.IsRunning);
         if (_tray is not null)
         {
             _tray.MainWindowRequested += ShowMainWindow;
@@ -284,7 +285,13 @@ public partial class App : Application
             _tray.SingleClickRequested += OnTraySingleClick;
             _tray.DoubleClickRequested += OnTrayDoubleClick;
             _tray.ExitRequested += ExitApplication;
+            _tray.StartServiceRequested += OnTrayStartService;
+            _tray.StopServiceRequested += OnTrayStopService;
+            _tray.RestartServiceRequested += OnTrayRestartService;
             UpdateTrayDoubleClickDetection();
+
+            // 服务状态变化时同步托盘菜单(启动/停止/重启菜单项随运行状态切换)
+            DshService.Instance.StateChanged += OnDshStateChangedForTray;
 
             // 设置变化时同步双击检测开关
             SettingsService.Instance.SettingsChanged += OnSettingsChanged;
@@ -294,6 +301,42 @@ public partial class App : Application
     private void OnSettingsChanged()
     {
         UpdateTrayDoubleClickDetection();
+    }
+
+    /// <summary>
+    /// dsh 服务状态变化(启动/退出/安装进度等)时刷新托盘菜单。
+    /// StateChanged 可能在后台线程触发,必须调度到 UI 线程再改托盘菜单。
+    /// </summary>
+    private void OnDshStateChangedForTray()
+    {
+        if (_tray is null)
+        {
+            return;
+        }
+
+        var running = DshService.Instance.IsRunning;
+        Dispatcher.UIThread.Post(() => _tray.SetServiceRunning(running));
+    }
+
+    /// <summary>托盘菜单“启动服务”。</summary>
+    private void OnTrayStartService()
+    {
+        DshService.Instance.AppendSystemLog("[托盘] 手动启动 dsh 服务");
+        _ = DshService.Instance.StartAsync();
+    }
+
+    /// <summary>托盘菜单“停止服务”。Stop 内部会关闭 WebView 会话,需在 UI 线程执行(托盘菜单回调即 UI 线程)。</summary>
+    private void OnTrayStopService()
+    {
+        DshService.Instance.AppendSystemLog("[托盘] 手动停止 dsh 服务");
+        DshService.Instance.Stop();
+    }
+
+    /// <summary>托盘菜单“重启服务”。</summary>
+    private void OnTrayRestartService()
+    {
+        DshService.Instance.AppendSystemLog("[托盘] 手动重启 dsh 服务");
+        _ = DshService.Instance.RestartAsync();
     }
 
     /// <summary>双击行为为“无动作”时关闭托盘的双击检测,单击立即响应。</summary>
