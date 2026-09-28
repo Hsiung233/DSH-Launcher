@@ -529,8 +529,19 @@ namespace DSH_Launcher.Services
                         .ToList();
                     if (added.Count > 0)
                     {
-                        this.MarkPendingRestart(added);
-                        this.AppendSystemLog("运行中的 dsh 会在重启后装载新插件。");
+                        // dsh-hmr 会监听 package.json 的 bundles 变化热装配新 bundle(实测见下),
+                        // live 基线下不再标「待加载」 —— 磁盘上已生效就是运行态已生效。
+                        // (2026-09-28 实测:dsh plugin add 后未重启,官方插件页显示 bundle 的 4 个
+                        // 组件 fiber 全部 active,“运行中”数据源是活体 fiberPhase。)
+                        if (DshService.Instance.RuntimePatchReload == "live")
+                        {
+                            this.AppendSystemLog("运行中的 dsh 会热装配新插件(几秒内生效)。");
+                        }
+                        else
+                        {
+                            this.MarkPendingRestart(added);
+                            this.AppendSystemLog("运行中的 dsh 会在重启后装载新插件。");
+                        }
                     }
                 }
 

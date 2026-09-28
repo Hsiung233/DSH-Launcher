@@ -449,21 +449,44 @@ namespace DSH_Launcher.Views
         }
 
         /// <summary>
-        /// 安装成功后,若 dsh 服务正在运行则询问是否立即重启让它生效。
-        /// dsh 0.1.7 的官方插件管理器对官方安装源运行时热重载,但启动器走的是
-        /// <c>dsh plugin</c>(CLI 转发 pnpm)安装路径,改动能否被运行实例热加载未端到端验证过,
-        /// 故保守仍提示重启。dsh 未运行时不需要提示,下次启动自然带上新插件。
+        /// 安装成功后的生效说明。dsh 运行中且热重载基线为 <c>live</c>(dsh-hmr 监听
+        /// package.json 的 bundles 变化并热装配,含 CLI <c>dsh plugin add</c> 路径,
+        /// 2026-09-28 实测闭环):直接提示已生效,不再询问重启;
+        /// 否则仍询问是否立即重启让新插件生效。dsh 未运行时不需要提示,下次启动自然带上。
         /// </summary>
-        private Task PromptRestartAfterInstallAsync(string pluginName)
-            => this.PromptRestartForChangeAsync(
-                $"已安装 {pluginName}。dsh 服务正在运行,新插件要在服务下次启动时才会加载"
-                + "(bundle 层只在启动时装配,刷新 Web 页面无法生效)。");
+        private async Task PromptRestartAfterInstallAsync(string pluginName)
+        {
+            var dsh = DshService.Instance;
+            if (dsh.IsRunning && dsh.RuntimePatchReload == "live")
+            {
+                this._plugins.AppendSystemLog(
+                    $"运行中的 dsh 会热装配 {pluginName}(几秒内生效;如 Web 界面没出现新入口,刷新页面)。");
+                return;
+            }
 
-        /// <summary>卸载成功后,若 dsh 服务正在运行则询问是否立即重启以移除该插件。</summary>
-        private Task PromptRestartAfterUninstallAsync(int count)
-            => this.PromptRestartForChangeAsync(count == 1
+            await this.PromptRestartForChangeAsync(
+                $"已安装 {pluginName}。dsh 服务正在运行,新插件要在服务下次启动时才会加载");
+        }
+
+        /// <summary>卸载成功后的生效说明,分流逻辑同安装(热重载基线为 live 时免重启)。</summary>
+        private async Task PromptRestartAfterUninstallAsync(int count)
+        {
+            var changeText = count == 1
                 ? "已卸载插件。运行中的 dsh 服务要重启后才会移除它。"
-                : $"已卸载 {count} 个插件。运行中的 dsh 服务要重启后才会移除它们。");
+                : $"已卸载 {count} 个插件。运行中的 dsh 服务要重启后才会移除它们。";
+
+            var dsh = DshService.Instance;
+            if (dsh.IsRunning && dsh.RuntimePatchReload == "live")
+            {
+                this._plugins.AppendSystemLog(
+                    count == 1
+                        ? "插件已从运行中的 dsh 热卸载。"
+                        : $"{count} 个插件已从运行中的 dsh 热卸载。");
+                return;
+            }
+
+            await this.PromptRestartForChangeAsync(changeText);
+        }
 
         /// <summary>变更后询问是否立即重启 dsh(安装/卸载共用;dsh 未运行时直接跳过)。</summary>
         private async Task PromptRestartForChangeAsync(string changeText)
