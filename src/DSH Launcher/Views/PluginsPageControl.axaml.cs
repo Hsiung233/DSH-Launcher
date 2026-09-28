@@ -450,11 +450,9 @@ namespace DSH_Launcher.Views
 
         /// <summary>
         /// 安装成功后,若 dsh 服务正在运行则询问是否立即重启让它生效。
-        /// 依据(已核实 dsh 源码):新装插件加入 profile 的 bundles 层,而层组合只在
-        /// <c>dsh web</c> 启动时装配 —— 安装只改 package.json 与 node_modules,
-        /// 运行中的进程不感知,刷新 Web 页面也无法生效;启用/禁用(写
-        /// cordis.patch.yml)才走 live 热重载。dsh 未运行时不需要提示,
-        /// 下次启动自然带上新插件。
+        /// dsh 0.1.7 的官方插件管理器对官方安装源运行时热重载,但启动器走的是
+        /// <c>dsh plugin</c>(CLI 转发 pnpm)安装路径,改动能否被运行实例热加载未端到端验证过,
+        /// 故保守仍提示重启。dsh 未运行时不需要提示,下次启动自然带上新插件。
         /// </summary>
         private Task PromptRestartAfterInstallAsync(string pluginName)
             => this.PromptRestartForChangeAsync(
@@ -549,7 +547,8 @@ namespace DSH_Launcher.Views
 
         /// <summary>
         /// 按运行基线描述启停覆盖的生效方式。判断依据是
-        /// <see cref="DshService.RuntimePatchReload"/>(启动当刻的磁盘配置 = 运行实例的真实配置):
+        /// <see cref="DshService.RuntimePatchReload"/>(按已安装 dsh 版本判定:dsh-hmr 监听
+        /// cordis.patch.yml 外部改动并热重载):
         /// live ⇒ 写完 cordis.patch.yml 即热生效,不必重启;startup ⇒ 必须重启;
         /// dsh 未运行 ⇒ 下次启动自然按新文件加载。
         /// </summary>
@@ -874,13 +873,6 @@ namespace DSH_Launcher.Views
 
         private void OnPluginLogAppended(string text) => Dispatcher.UIThread.Post(() =>
         {
-            // 浮窗关着时不给用户看日志,就在浮动按钮上亮一个圆点提示有新输出。
-            // 这步很轻,不必等节流 —— 亮了圆点用户才知道有输出。
-            if (!this.PluginLogFlyout.IsVisible)
-            {
-                this.PluginLogUnreadDot.IsVisible = true;
-            }
-
             // 正文刷新走节流(见 LogAppendThrottle),内容从服务侧现取
             this._pluginLogThrottle.Schedule();
         });
@@ -922,7 +914,7 @@ namespace DSH_Launcher.Views
 
         private void OnClosePluginLogClick(object? sender, RoutedEventArgs e) => this.SetPluginLogVisible(false);
 
-        /// <summary>显示/隐藏输出浮窗。打开时清掉未读小圆点并把日志滚到末尾。</summary>
+        /// <summary>显示/隐藏输出浮窗。打开时把日志滚到末尾。</summary>
         private void SetPluginLogVisible(bool visible)
         {
             this.PluginLogFlyout.IsVisible = visible;
@@ -930,14 +922,10 @@ namespace DSH_Launcher.Views
             // 命中层与浮窗同进同出:只有浮窗开着时才拦截“点空白处”
             this.PluginLogDismissLayer.IsVisible = visible;
 
-            if (!visible)
+            if (visible)
             {
-                this.PluginLogUnreadDot.IsVisible = false;
-                return;
+                this.PluginLogScroll.ScrollToEnd();
             }
-
-            this.PluginLogUnreadDot.IsVisible = false;
-            this.PluginLogScroll.ScrollToEnd();
         }
 
         private async void OnCopyPluginLogClick(object? sender, RoutedEventArgs e)

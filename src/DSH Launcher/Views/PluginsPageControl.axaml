@@ -204,13 +204,6 @@
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" FontSize="14" VerticalAlignment="Center"/>
                         <TextBlock Text="输出" VerticalAlignment="Center"/>
-                        <!-- 浮窗关着时,有新输出就亮一个小圆点 -->
-                        <Ellipse x:Name="PluginLogUnreadDot"
-                                 Width="8"
-                                 Height="8"
-                                 IsVisible="False"
-                                 VerticalAlignment="Center"
-                                 Fill="{DynamicResource SystemFillColorAttentionBrush}"/>
                     </StackPanel>
                 </Button>
             </StackPanel>
