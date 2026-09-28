@@ -138,6 +138,45 @@
                             <ComboBoxItem Content="打开浏览器"/>
                         </ComboBox>
                     </Grid>
+
+                    <Border Classes="rowSeparator"/>
+
+                    <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Classes="rowTitle" Text="服务意外退出时自动重启"/>
+                            <TextBlock Classes="rowDesc" Text="服务进程崩溃或被误杀时自动按原参数重启;连续自动重启最多 3 次(间隔 5/15/30 秒),稳定运行 5 分钟后重新计数。手动启停、退出应用不会触发"/>
+                        </StackPanel>
+                        <ToggleSwitch x:Name="AutoRestartOnCrashSwitch"
+                                      Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      IsCheckedChanged="OnAutoRestartOnCrashChanged"/>
+                    </Grid>
+
+                    <Border Classes="rowSeparator"/>
+
+                    <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Classes="rowTitle" Text="服务异常时系统通知"/>
+                            <TextBlock Classes="rowDesc" Text="服务意外退出、自动重启或启动失败时弹出 Windows 系统通知(主界面收在托盘里时也能第一时间知道;启动失败且主窗口可见时已有弹窗,不再重复通知)"/>
+                        </StackPanel>
+                        <ToggleSwitch x:Name="NotifyOnServiceExitSwitch"
+                                      Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      IsCheckedChanged="OnNotifyOnServiceExitChanged"/>
+                    </Grid>
+
+                    <Border Classes="rowSeparator"/>
+
+                    <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Classes="rowTitle" Text="发现新版本时系统通知"/>
+                            <TextBlock Classes="rowDesc" Text="检测到 @deepseek-ai/dsh 有新版本时弹出系统通知(检测在打开首页或服务停止后进行)"/>
+                        </StackPanel>
+                        <ToggleSwitch x:Name="NotifyOnUpdateAvailableSwitch"
+                                      Grid.Column="1"
+                                      VerticalAlignment="Center"
+                                      IsCheckedChanged="OnNotifyOnUpdateAvailableChanged"/>
+                    </Grid>
                 </StackPanel>
             </Border>
 

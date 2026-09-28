@@ -58,6 +58,16 @@ namespace DSH_Launcher.Services
         private volatile bool _stopRequestedByUser;
         private bool _startFailureHandled;
 
+        /// <summary>
+        /// 运行世代号:每一次**用户发起**的启动/停止都会递增。
+        /// 看门狗安排延迟重启时记下当时世代号,到点后发现世代号变了就放弃 ——
+        /// 这是取消挂起重启的唯一机制:用户在等待期间按了停止/手动启动/退出,不该再被“补一炮”。
+        /// </summary>
+        private int _watchdogGeneration;
+
+        /// <summary>已用掉的连续自动重启次数(判定规则见 <see cref="WatchdogPolicy"/>)。</summary>
+        private int _watchdogRestartsUsed;
+
         /// <summary>是否正处在“补齐依赖后重试”的序列中(用来抑制中间那次失败弹框)。</summary>
         private volatile bool _startRetryInProgress;
 
@@ -70,6 +80,18 @@ namespace DSH_Launcher.Services
 
         /// <summary>启动后在短时间内意外退出(非用户手动停止)时触发,用于弹出错误提示。</summary>
         public event Action? StartFailed;
+
+        /// <summary>
+        /// 稳定运行(超过启动失败观察期)后的意外退出(崩溃/被误杀,非用户主动停止),
+        /// 参数为本次运行时长。启动器用它发送系统通知/安排看门狗重启。
+        /// </summary>
+        public event Action<TimeSpan>? UnexpectedExit;
+
+        /// <summary>看门狗已安排自动重启:(第 attempt 次,共 max 次,延迟 delay)。仅在开启看门狗时触发。</summary>
+        public event Action<int, int, TimeSpan>? AutoRestartScheduled;
+
+        /// <summary>看门狗连续 <see cref="WatchdogPolicy.MaxRestarts"/> 次自动重启后仍退出,放弃并通知。</summary>
+        public event Action<int>? AutoRestartGaveUp;
 
         /// <summary>从 stdio 中检测到 Web 服务地址时触发。</summary>
         public event Action<string>? WebUrlDetected;
@@ -436,8 +458,20 @@ namespace DSH_Launcher.Services
         /// 失败当刻会拍依赖层快照留证(见 <see cref="CaptureResolutionDiagnosticsAsync"/>)。
         /// </para>
         /// </remarks>
-        public async Task<bool> StartAsync()
+        /// <param name="watchdogRestart">
+        /// true = 本次启动是看门狗自动重启:不递增运行世代号、不清零重启计数
+        /// (否则会把自己刚安排的这次重启“取消”掉)。用户/界面发起的启动一律默认 false。
+        /// </param>
+        public async Task<bool> StartAsync(bool watchdogRestart = false)
         {
+            if (!watchdogRestart)
+            {
+                // 用户发起的启动:递增世代号以取消任何挂着的看门狗重启,并把重启计数归零
+                // (用户亲自处理过一次,就当额度重新计)
+                this._watchdogGeneration++;
+                this._watchdogRestartsUsed = 0;
+            }
+
             try
             {
                 for (var attempt = 1; ; attempt++)
@@ -593,6 +627,75 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
+        /// 稳定运行后的意外退出处理:触发 <see cref="UnexpectedExit"/>,并按设置安排看门狗自动重启。
+        /// <para>
+        /// 延迟重启的实现要点:等待期间用户可能按了停止/手动启动/重启/退出应用 ——
+        /// 这些操作都会推进 <see cref="_watchdogGeneration"/>(Stop 与非看门狗路径的 <see cref="StartAsync"/>),
+        /// 到点后发现世代号变了就放弃,避免与用户的操作打架。
+        /// </para>
+        /// </summary>
+        private void HandleUnexpectedExit(TimeSpan ranFor)
+        {
+            this.UnexpectedExit?.Invoke(ranFor);
+
+            var settings = SettingsService.Instance.Settings;
+            if (WatchdogPolicy.ShouldResetAttempts(ranFor))
+            {
+                this._watchdogRestartsUsed = 0;
+            }
+
+            if (!settings.AutoRestartOnCrash || this._stopRequestedByUser)
+            {
+                return;
+            }
+
+            if (this._watchdogRestartsUsed >= WatchdogPolicy.MaxRestarts)
+            {
+                this.ReportWatchdogGaveUp();
+                return;
+            }
+
+            var attempt = ++this._watchdogRestartsUsed;
+            var delay = WatchdogPolicy.DelayFor(attempt);
+            var generation = this._watchdogGeneration;
+            this.AppendSystemLog($"[看门狗] 服务意外退出(本次运行 {(int)ranFor.TotalMinutes} 分 {ranFor.Seconds:00} 秒),"
+                + $"{delay.TotalSeconds:0} 秒后自动重启(第 {attempt}/{WatchdogPolicy.MaxRestarts} 次)");
+            this.AutoRestartScheduled?.Invoke(attempt, WatchdogPolicy.MaxRestarts, delay);
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(delay);
+
+                    // 延迟期间用户的任何手动启停都会推进世代号;服务已在跑(手动启动成功)也不必再重启
+                    if (generation != this._watchdogGeneration || this._stopRequestedByUser || this.IsRunning)
+                    {
+                        this.AppendSystemLog("[看门狗] 自动重启已取消(期间有手动操作)");
+                        return;
+                    }
+
+                    this.AppendSystemLog("[看门狗] 正在自动重启服务…");
+                    var ok = await this.StartAsync(watchdogRestart: true);
+                    this.AppendSystemLog(ok
+                        ? "[看门狗] 服务已自动重启"
+                        : "[看门狗] 自动重启失败,详情见上方日志");
+                }
+                catch (Exception ex)
+                {
+                    AppLogService.Write($"[看门狗] 自动重启异常: {ex.GetType().Name}: {ex.Message}");
+                }
+            });
+        }
+
+        /// <summary>看门狗放弃(连续重启次数用尽)的收尾:写日志并通知。</summary>
+        private void ReportWatchdogGaveUp()
+        {
+            this.AppendSystemLog($"[看门狗] 已连续自动重启 {WatchdogPolicy.MaxRestarts} 次仍退出,不再重试,请查看日志排查原因");
+            this.AutoRestartGaveUp?.Invoke(WatchdogPolicy.MaxRestarts);
+        }
+
+        /// <summary>
         /// 确定本次运行的启停生效方式基线(<see cref="RuntimePatchReload"/>),按已安装的 dsh 版本:
         /// 0.1.6-alpha.1 起的 web profile 默认启用 dsh-hmr 文件监听(外部改 cordis.patch.yml 免重启热生效),
         /// 更早的版本没有该能力,按 startup 处理。版本未知(尚未探测到,或用户手动在应用外启动)按 live 处理。
@@ -626,6 +729,21 @@ namespace DSH_Launcher.Services
             // 进程没了,运行基线随之失效(消费方以 IsRunning 为门,这里是保持状态自洽)
             this.RuntimePatchReload = string.Empty;
             StateChanged?.Invoke();
+
+            // 稳定运行后的意外退出(崩溃/被误杀):failedEarly 只覆盖观察期内,
+            // 运行较久后才退出的属于真正的意外退出 → 触发通知与可选的看门狗自动重启。
+            // 启动失败路径(failedEarly)不进看门狗:StartAsync 自己的重试与失败诊断已覆盖。
+            if (!failedEarly
+                && !this._stopRequestedByUser
+                && ReferenceEquals(this._process, process)
+                && this._startTimeUtc != DateTime.MinValue)
+            {
+                var ranFor = DateTime.UtcNow - this._startTimeUtc;
+                if (ranFor > LateExitFailureWindow)
+                {
+                    this.HandleUnexpectedExit(ranFor);
+                }
+            }
 
             if (failedEarly)
             {
@@ -782,6 +900,10 @@ namespace DSH_Launcher.Services
         public void Stop()
         {
             this._stopRequestedByUser = true;
+
+            // 用户主动停止:取消任何挂着的看门狗重启,并把重启计数归零(下次意外退出从头计)
+            this._watchdogGeneration++;
+            this._watchdogRestartsUsed = 0;
 
             var process = this._process;
             if (process is not null && IsAlive(process))

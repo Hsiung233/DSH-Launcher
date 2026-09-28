@@ -49,6 +49,16 @@ namespace DSH_Launcher.Views
         /// <summary>单列表当前实际显示的条目(受「显示全部」与筛选框影响),批量选择以它为准。</summary>
         private IReadOnlyList<PluginEntry> _entriesView = [];
 
+        /// <summary>插件更新检查是否进行中(与其它忙碌态共同决定按钮可用性)。</summary>
+        private bool _checkingUpdates;
+
+        /// <summary>
+        /// 最近一次检查更新的结果(包名 → npm 最新版;null = 查不到)。
+        /// 列表刷新会重建条目对象,结果存在页面级别、每次刷新后重新套用,
+        /// 这样「检查更新 → 刷新列表」的徽标不会丢。
+        /// </summary>
+        private Dictionary<string, string?> _latestVersions = new(StringComparer.Ordinal);
+
         /// <summary>已订阅选中态变化的条目(每次刷新重建,用于退订)。</summary>
         private readonly List<PluginEntry> _observedEntries = [];
 
@@ -178,7 +188,10 @@ namespace DSH_Launcher.Views
             // ② 单列表「插件与条目」(按「显示全部」与筛选框决定实际显示哪些,计数也在那里算)
             this.ApplyEntryFilter();
 
-            // ③ pnpm 状态:安装/卸载都由 dsh plugin 转发给它,缺失时只提示、不禁用页面(启停不依赖 pnpm)
+            // ③ 把最近一次检查更新的结果重新套用到新条目上(徽标不因刷新而丢)
+            this.ApplyLatestVersions();
+
+            // ④ pnpm 状态:安装/卸载都由 dsh plugin 转发给它,缺失时只提示、不禁用页面(启停不依赖 pnpm)
             this.PnpmBadge.IsVisible = !snapshot.PnpmAvailable;
             if (!snapshot.PnpmAvailable)
             {
@@ -543,6 +556,155 @@ namespace DSH_Launcher.Views
             this.RevealProfileButton.IsEnabled = !busy;
             this.RefreshCatalogButton.IsEnabled = !busy;
             this.InstallPluginButton.IsEnabled = !busy;
+            this.CheckUpdatesButton.IsEnabled = !busy && !this._checkingUpdates && this._snapshot is not null;
+            this.UpdateUpdateAllButton();
+        }
+
+        // ---- 插件更新检查 ----
+
+        /// <summary>逐个查询已安装插件的 npm 最新版本并回填到条目上(徽标由 LatestVersion 变更通知驱动)。</summary>
+        private async Task CheckUpdatesAsync()
+        {
+            if (this._checkingUpdates || this._snapshot is null || this._plugins.IsBusy)
+            {
+                return;
+            }
+
+            var packages = this._snapshot.Installed
+                .Where(entry => entry.Version is { Length: > 0 })
+                .Select(entry => entry.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (packages.Count == 0)
+            {
+                this.ShowUpdateCheckStatus("没有已安装的插件可检查。");
+                return;
+            }
+
+            this._checkingUpdates = true;
+            this.UpdateBusy();
+            this.ShowUpdateCheckStatus($"正在检查更新(0/{packages.Count})…");
+            try
+            {
+                var latest = await PluginService.Instance.FetchLatestVersionsAsync(packages, (done, total) =>
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (this._checkingUpdates)
+                        {
+                            this.ShowUpdateCheckStatus($"正在检查更新({done}/{total})…");
+                        }
+                    }));
+
+                this._latestVersions = latest;
+                this.ApplyLatestVersions();
+
+                var updatable = this._snapshot.Installed.Count(entry => entry.IsUpdateAvailable);
+                this.ShowUpdateCheckStatus(updatable == 0
+                    ? "检查完成:全部插件已是最新。"
+                    : $"检查完成:{updatable} 个插件可更新。");
+            }
+            catch (Exception ex)
+            {
+                this.ShowUpdateCheckStatus($"检查更新失败: {ex.Message}");
+            }
+            finally
+            {
+                this._checkingUpdates = false;
+                this.UpdateBusy();
+            }
+        }
+
+        /// <summary>把缓存住的检查结果套到当前条目上(条目对象在每次刷新后都是新的)。</summary>
+        private void ApplyLatestVersions()
+        {
+            if (this._snapshot is null)
+            {
+                return;
+            }
+
+            foreach (var entry in this._snapshot.AllEntries)
+            {
+                if (this._latestVersions.TryGetValue(entry.Name, out var latest))
+                {
+                    entry.LatestVersion = latest;
+                }
+            }
+        }
+
+        /// <summary>「更新全部」按钮的文案与可用性:有可更新插件才出现,更新过程中禁用。</summary>
+        private void UpdateUpdateAllButton()
+        {
+            var updatable = this._snapshot?.Installed
+                .Where(entry => entry.CanUpdate)
+                .Select(entry => entry.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList() ?? [];
+
+            this.UpdateAllButton.IsVisible = updatable.Count > 0;
+            this.UpdateAllButton.Content = $"更新全部({updatable.Count})";
+            this.UpdateAllButton.IsEnabled = updatable.Count > 0 && !this._plugins.IsBusy && !this._checkingUpdates;
+        }
+
+        /// <summary>左栏的检查状态行(检查中/结果/失败原因)。</summary>
+        private void ShowUpdateCheckStatus(string text)
+        {
+            this.UpdateCheckStatusText.Text = text;
+            this.UpdateCheckStatusText.IsVisible = true;
+        }
+
+        private void OnCheckUpdatesClick(object? sender, RoutedEventArgs e) => _ = this.CheckUpdatesAsync();
+
+        /// <summary>行内「更新」:单包升级,成功后询问是否重启让新版本生效。</summary>
+        private async void OnUpdateEntryClick(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { DataContext: PluginEntry entry } || !entry.CanUpdate)
+            {
+                return;
+            }
+
+            var ok = await this._plugins.UpdateAsync(entry.Name);
+            await this.RefreshAsync();
+            if (ok)
+            {
+                await this.PromptRestartAfterUpdateAsync(entry.Name);
+            }
+        }
+
+        /// <summary>「更新全部」:逐个升级,最后刷新一次、统一询问一次重启。</summary>
+        private async void OnUpdateAllClick(object? sender, RoutedEventArgs e)
+        {
+            var names = (this._snapshot?.Installed ?? (IReadOnlyList<PluginEntry>)[])
+                .Where(entry => entry.CanUpdate)
+                .Select(entry => entry.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (names.Count == 0)
+            {
+                return;
+            }
+
+            var succeeded = await this._plugins.UpdateBatchAsync(names);
+            await this.RefreshAsync();
+            if (succeeded > 0)
+            {
+                await this.PromptRestartAfterUpdateAsync(succeeded == 1 ? "1 个插件" : $"{succeeded} 个插件");
+            }
+        }
+
+        /// <summary>
+        /// 更新成功后的生效说明:dsh-hmr 的热重载只针对 bundle/patch 结构变化,
+        /// “同包换版本”是否热生效未验证,保守起见运行中一律询问重启。
+        /// </summary>
+        private async Task PromptRestartAfterUpdateAsync(string changeText)
+        {
+            if (!DshService.Instance.IsRunning)
+            {
+                return;
+            }
+
+            await this.PromptRestartForChangeAsync($"已更新 {changeText}。运行中的 dsh 服务要重启后才会加载新版本");
         }
 
         /// <summary>空态里的「去安装新插件」:切到第 2 个视图(0=已安装,1=安装新插件)。</summary>

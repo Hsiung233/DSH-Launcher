@@ -13,6 +13,10 @@
 ### 服务管理
 - **一键安装 / 更新**：探测 `dsh` 是否安装，显示已安装版本与 npm 上的最新版本，有更新时给出「更新」按钮。
 - **启动 / 停止 / 重启**：通过 `dsh web` 启动服务，自动从输出中解析 Web 地址（形如 `http://127.0.0.1:3080/?token=...`）。
+- **看门狗自动重启**（默认关闭）：服务稳定运行后被崩溃/误杀时，自动按原参数重启 —— 最多连续 3 次（间隔 5/15/30 秒），
+  稳定运行 5 分钟后重新计数；用户手动启停、退出应用都会取消挂起的自动重启。每次重启与放弃都记录在日志里。
+- **系统通知**：服务意外退出、看门狗自动重启、启动失败（主窗口收在托盘里时）与检测到 dsh 新版本时，
+  弹出 Windows 系统通知（Win10/11 上渲染为 Toast）。各自可在设置页关闭；主窗口可见时启动失败已有弹窗，不重复通知。
 - **端口配置**：可自定义监听端口（1–65535），留空使用 dsh 默认的 `3080`。
 - **进程树清理**：停止时连同子进程一起终止（Windows 用 Job Object，其他平台用 `Kill(entireProcessTree)`），应用退出/系统关机时也会兜底停止服务。
 - **实时日志**：`dsh web` 的标准输出实时显示在首页日志卡片中，支持复制、清空、在文件管理器中定位日志文件。
@@ -48,6 +52,9 @@ WebView 做了两项体验优化：
 
 - **插件与条目**（单列表）：汇总已安装插件的条目与有启停覆盖的条目（含未参与组合的包），支持**启用 / 禁用**（通过往 `cordis.patch.yml` 写定向覆盖实现，仅用户安装的插件开放）、**卸载**、**恢复默认**。勾「显示全部」查看 `dsh --profile web --dump-config` 的完整组合清单（只读诊断）：dsh 自带条目由 dsh 预设管理、不提供启停，「恢复默认」用于清理启动器写过的历史覆盖。可搜索筛选。
 - **批量操作**：每行勾选框 + 左栏批量按钮（全选 / 批量启用 / 禁用 / 卸载 / 恢复），支持全选（作用于当前筛选结果）。
+- **更新检测**：左栏「检查更新」逐个查询已安装插件在 npm 上的最新版本，可更新的插件在行内标注「可更新到 vX」。
+  可单条更新或「更新全部」；更新与安装走同一条命令通道（`dsh plugin add 包名@latest`），只覆盖 npm 包
+  （GitHub 直装的插件查不到 npm 版本，不参与更新）。运行中更新后统一询问是否重启 dsh 让新版本生效。
 - **安装新插件**：从社区策展目录搜索并一键安装（转发给 `dsh plugin --profile web add ...`）。
   - 支持两份目录：默认 `awesome-dsh-plugin.com`（约 3700 条），或 `dsh-plugin.org`（约 9300 条，带人工验证标记）。目录结构自动识别，按地址缓存，可手动刷新。
   - 也支持手动输入包名/`github:owner/repo` 规格安装。
@@ -72,7 +79,7 @@ WinUI 卡片式设置页，分四组：
 
 | 卡片 | 设置项 |
 |---|---|
-| **服务** | 开机自启动、启动时打开主界面、启动时自动运行服务、服务就绪后的动作、重复启动时的动作 |
+| **服务** | 开机自启动、启动时打开主界面、启动时自动运行服务、服务就绪后的动作、重复启动时的动作、服务意外退出时自动重启（看门狗）、服务异常时系统通知、发现新版本时系统通知 |
 | **系统托盘** | 单击动作、双击动作 |
 | **WebView** | 应用内链接打开方式（系统浏览器 / 应用内）、关闭时保留窗口、保留超时（分钟） |
 | **环境** | npm 源（使用配置源 / 官方 / npmmirror / 腾讯云 / 华为云）、HTTP 代理、不走代理的地址 |
@@ -108,7 +115,7 @@ WinUI 卡片式设置页，分四组：
 - **纯逻辑与界面分离到可测**：插件目录的加载状态机（缓存命中/同地址去重/世代号防"慢的旧来源覆盖新来源"）是 `CatalogLoadController`，启动失败诊断是 `StartFailureDiagnostics`，两者都不依赖界面。
 - **状态挂数据对象、不挂控件**：列表是虚拟化的（容器会回收复用），所以"勾选""待确认卸载"这类状态存在 `PluginEntry` 上，而不是写在 `Button.Content` 里。
 - **命名空间与文件夹一致**：`Services/Plugins/*` → `DSH_Launcher.Services.Plugins`，`Views/Shared/*` → `DSH_Launcher.Views.Shared`。
-- **纯逻辑有单元测试兜底**（`DSH Launcher.Tests`，见下文）：版本比较、日志裁剪、`cordis.patch.yml` 读写、两份插件目录的解析、`--dump-config` 解析、目录加载时序、编码判定、设置 JSON 的宽容枚举解析、自启动项的格式与对齐决策表等。
+- **纯逻辑有单元测试兜底**（`DSH Launcher.Tests`，见下文）：版本比较、日志裁剪、`cordis.patch.yml` 读写、两份插件目录的解析、`--dump-config` 解析、目录加载时序、编码判定、设置 JSON 的宽容枚举解析、自启动项的格式与对齐决策表、看门狗的退避与计数规则、插件更新的版本判定与 `npm view` 输出解析等。
 
 ---
 
@@ -231,6 +238,8 @@ src/DSH Launcher/                 主程序
     ChildEnvironment.cs           npm 源 / 代理注入子进程与 HttpClient
     PlatformProcess.cs            跨平台进程启动、命令定位、路径与输出解码
     WebOpener.cs                  WebView 窗口管理、引擎探测（窗口复用/空闲释放）
+    NotificationService.cs        系统通知（隐藏托盘图标 + Shell_NotifyIcon 气泡，失败不拖累主功能）
+    WatchdogPolicy.cs             看门狗的纯决策规则（退避/次数上限/计数重置，被单元测试覆盖）
     BrowserLauncher.cs            用系统默认浏览器打开地址（与 WebView 无关，故独立）
     WindowStateService.cs         窗口位置/尺寸/最大化状态记忆
     TrayService.cs                系统托盘图标与交互
@@ -252,6 +261,8 @@ tests/DSH Launcher.Tests/         单元测试（MSTest，覆盖上表中的纯�
   CatalogLoadControllerTests.cs   目录加载时序（慢的旧来源/缓存命中顶掉在飞请求）
   PluginEntryTests.cs             插件条目的界面状态（勾选、待确认卸载）
   AutoStartTests.cs               自启动项格式、`--autostart` 标记、对齐决策表与状态提示文案
+  WatchdogPolicyTests.cs          看门狗决策表（退避序列/次数上限/计数重置）
+  PluginUpdateTests.cs            插件更新判定与 `npm view` 输出解析
 
 Build-Publish.ps1                 发布到 src\DSH Launcher\bin\Publish 的脚本（清空旧产物、结束运行中的实例）
 Build-Installer.ps1               先调 Build-Publish.ps1 发布，再用 Inno Setup 编译安装包

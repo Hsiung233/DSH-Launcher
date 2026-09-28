@@ -870,6 +870,136 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
+        /// 把已安装插件更新到 npm latest。与安装同一条命令通道
+        /// (<c>dsh plugin --profile web add &lt;pkg&gt;@latest</c>,由 dsh 转发给 pnpm,
+        /// 成功后 dsh 会重新对齐 bundles 列表),因此并发互斥、日志、重启后生效标注全部复用。
+        /// 只对 npm 上确实存在的包开放(检查更新阶段已用 <c>npm view</c> 验证过);
+        /// GitHub-only 的插件查不到 npm 版本,不会出现在可更新列表里。
+        /// </summary>
+        public async Task<bool> UpdateAsync(string packageName)
+        {
+            if (string.IsNullOrWhiteSpace(packageName))
+            {
+                return false;
+            }
+
+            var exitCode = await this.InstallCoreAsync($"{packageName}@latest");
+            if (exitCode == 0)
+            {
+                this.AppendSystemLog($"已更新插件 {packageName} 到 npm 最新版本");
+                return true;
+            }
+
+            // 失败原因已由 InstallCoreAsync 写进日志(含退出码提示),这里不再重复
+            return false;
+        }
+
+        /// <summary>
+        /// 批量更新:逐个交给 <see cref="UpdateAsync"/>(不因中途失败而放弃后面的),返回成功个数。
+        /// 调用方在全部结束后刷新一次即可。
+        /// </summary>
+        public async Task<int> UpdateBatchAsync(IReadOnlyCollection<string> packageNames)
+        {
+            var targets = packageNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (targets.Count == 0)
+            {
+                return 0;
+            }
+
+            this.AppendSystemLog($"开始批量更新 {targets.Count} 个插件: {string.Join(", ", targets)}");
+            var succeeded = 0;
+            foreach (var name in targets)
+            {
+                if (await this.UpdateAsync(name))
+                {
+                    succeeded++;
+                }
+            }
+
+            this.AppendSystemLog($"批量更新结束:成功 {succeeded} / {targets.Count}");
+            return succeeded;
+        }
+
+        /// <summary>
+        /// 判定是否需要更新。任一版本缺失/无法比较时按“无更新”(不确定就当作无更新,与
+        /// <see cref="DshService.CheckForUpdateAsync"/> 同一态度,避免误报)。
+        /// </summary>
+        /// <remarks>internal 而非 private:被单元测试覆盖(见 DSH Launcher.Tests)。</remarks>
+        internal static bool IsUpdateNeeded(string? installedVersion, string? latestVersion)
+        {
+            if (string.IsNullOrWhiteSpace(installedVersion) || string.IsNullOrWhiteSpace(latestVersion))
+            {
+                return false;
+            }
+
+            return DshService.CompareVersions(latestVersion.Trim(), installedVersion.Trim()) > 0;
+        }
+
+        /// <summary>
+        /// 解析 <c>npm view &lt;pkg&gt; version</c> 的输出:取最后一个非空行(npm 可能先打印告警),
+        /// 剥掉可能被一起带上的引号;解析不出返回 null。
+        /// </summary>
+        /// <remarks>internal 而非 private:被单元测试覆盖(见 DSH Launcher.Tests)。</remarks>
+        internal static string? ParseLatestVersionOutput(string stdout)
+        {
+            var line = stdout
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(text => text.Trim())
+                .LastOrDefault(text => text.Length > 0);
+
+            if (line is null)
+            {
+                return null;
+            }
+
+            line = line.Trim('"', '\'');
+            return line.Length == 0 ? null : line;
+        }
+
+        /// <summary>
+        /// 逐个查询一批包在 npm 上的最新版本(顺序执行:每个包一次 <c>npm view</c> 子进程,
+        /// 几十个包也只是几秒到十几秒,不值得为并发引入对 npm 的轰炸)。查不到/查询失败的包
+        /// 记为 null —— 意为“未知,不可更新”,<see cref="IsUpdateNeeded"/> 会把它判为无更新。
+        /// </summary>
+        /// <param name="onProgress">进度回调(已完成数,总数);可能在后台线程触发,可为 null。</param>
+        public async Task<Dictionary<string, string?>> FetchLatestVersionsAsync(
+            IEnumerable<string> packageNames,
+            Action<int, int>? onProgress = null)
+        {
+            var names = packageNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var results = new Dictionary<string, string?>(StringComparer.Ordinal);
+            var index = 0;
+            foreach (var name in names)
+            {
+                index++;
+                try
+                {
+                    var result = await ChildProcessRunner.CaptureAsync($"npm view {PlatformProcess.Quote(name)} version");
+                    results[name] = result.ExitCode == 0
+                        ? ParseLatestVersionOutput(result.Stdout)
+                        : null;
+                }
+                catch (Exception)
+                {
+                    // 网络问题/命令不可用:这个包按“版本未知”处理,不影响其余包
+                    results[name] = null;
+                }
+
+                onProgress?.Invoke(index, names.Count);
+            }
+
+            return results;
+        }
+
+        /// <summary>
         /// 规整用户输入的插件规格:
         /// dsh 会把 <c>.</c>/<c>../x</c> 这类相对路径按“调用者的工作目录”改写,而启动器的工作目录不确定,
         /// 因此本地路径一律转成绝对路径再交给 pnpm。

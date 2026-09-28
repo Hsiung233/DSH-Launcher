@@ -162,6 +162,13 @@ public partial class App : Application
             // DSH 服务启动并检测到 Web 地址后,按“启动DSH服务后”设置自动打开
             DshService.Instance.WebUrlDetected += OnDshWebUrlDetected;
 
+            // 服务异常/新版本的系统通知与看门狗事件(见各处理器的门控条件)
+            DshService.Instance.UnexpectedExit += OnDshUnexpectedExit;
+            DshService.Instance.AutoRestartScheduled += OnDshAutoRestartScheduled;
+            DshService.Instance.AutoRestartGaveUp += OnDshAutoRestartGaveUp;
+            DshService.Instance.StartFailed += OnDshStartFailedNotification;
+            DshService.Instance.StateChanged += OnDshStateChangedForUpdateNotice;
+
             _window = new MainWindow();
 
             // 拦截标题栏关闭按钮:隐藏到系统托盘而不是退出
@@ -243,6 +250,104 @@ public partial class App : Application
         // WebUrlDetected 从 stdio 后台线程触发,而 WebOpener 会创建 UI 对象(Window),
         // 必须调度到 UI 线程,否则抛跨线程异常导致 WebView 被打开异常却退回浏览器
         Avalonia.Threading.Dispatcher.UIThread.Post(() => WebOpener.Open(action, url));
+    }
+
+    // ---- 服务异常/新版本的系统通知 ----
+    // 门控总原则:系统通知是为“主界面收在托盘里”的时刻准备的;对话框/界面里已有同等信息的场景
+    // (启动失败且主窗口可见时已有错误弹窗)不再重复打扰。
+
+    /// <summary>已通知过的“新版本”目标版本号(同一版本只提醒一次;跨版本更新会再次提醒)。</summary>
+    private string? _updateNotifiedVersion;
+
+    /// <summary>服务稳定运行后意外退出且未开启看门狗:发一条警告通知(开了看门狗时由重启通知代替)。</summary>
+    private void OnDshUnexpectedExit(TimeSpan ranFor)
+    {
+        var settings = SettingsService.Instance.Settings;
+        if (!settings.NotifyOnServiceExit || settings.AutoRestartOnCrash)
+        {
+            return;
+        }
+
+        NotificationService.Show(
+            "DSH 服务已退出",
+            $"dsh 服务意外退出(本次运行 {(int)ranFor.TotalMinutes} 分 {ranFor.Seconds:00} 秒),可在启动器中重新启动。",
+            NotificationKind.Warning);
+    }
+
+    /// <summary>看门狗已安排自动重启:告知用户服务崩溃了、什么时候会回来。</summary>
+    private void OnDshAutoRestartScheduled(int attempt, int maxAttempts, TimeSpan delay)
+    {
+        if (!SettingsService.Instance.Settings.NotifyOnServiceExit)
+        {
+            return;
+        }
+
+        NotificationService.Show(
+            "DSH 服务已退出",
+            $"dsh 服务意外退出,{delay.TotalSeconds:0} 秒后将自动重启(第 {attempt}/{maxAttempts} 次)。",
+            NotificationKind.Warning);
+    }
+
+    /// <summary>看门狗放弃:连续重启次数用尽,提醒用户手动排查。</summary>
+    private void OnDshAutoRestartGaveUp(int attempts)
+    {
+        if (!SettingsService.Instance.Settings.NotifyOnServiceExit)
+        {
+            return;
+        }
+
+        NotificationService.Show(
+            "DSH 服务自动重启失败",
+            $"已连续自动重启 {attempts} 次仍退出,请打开启动器查看日志。",
+            NotificationKind.Error);
+    }
+
+    /// <summary>
+    /// 启动失败:主窗口不可见时发通知(可见时首页已有错误弹窗,不再叠加打扰)。
+    /// StartFailed 可能在后台线程触发,读窗口可见性前先回 UI 线程。
+    /// </summary>
+    private void OnDshStartFailedNotification()
+    {
+        if (!SettingsService.Instance.Settings.NotifyOnServiceExit)
+        {
+            return;
+        }
+
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (_window is { IsVisible: true })
+            {
+                return;
+            }
+
+            NotificationService.Show(
+                "DSH 服务启动失败",
+                "dsh 进程未能启动或立即退出了,详情见启动器首页日志。",
+                NotificationKind.Error);
+        });
+    }
+
+    /// <summary>检测到 dsh 新版本:发一条通知。StateChanged 可能在后台线程触发,NotificationService 本身线程安全。</summary>
+    private void OnDshStateChangedForUpdateNotice()
+    {
+        var dsh = DshService.Instance;
+        if (!SettingsService.Instance.Settings.NotifyOnUpdateAvailable || !dsh.IsUpdateAvailable)
+        {
+            return;
+        }
+
+        // 同一版本只提醒一次;升级后 IsUpdateAvailable 变 false,下次有更新的版本再提醒
+        var latest = dsh.LatestVersion;
+        if (string.Equals(this._updateNotifiedVersion, latest, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        this._updateNotifiedVersion = latest;
+        NotificationService.Show(
+            "dsh 有新版本",
+            $"发现新版本 v{latest}(当前 v{dsh.InstalledVersion}),可在启动器首页更新。",
+            NotificationKind.Info);
     }
 
     /// <summary>

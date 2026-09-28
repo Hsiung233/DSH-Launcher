@@ -41,6 +41,17 @@
                                            FontSize="12"
                                            Opacity="0.7"
                                            VerticalAlignment="Center"/>
+                                <!-- 可更新徽标:点「检查更新」后由异步回填点亮(LatestVersion 变更通知驱动) -->
+                                <Border IsVisible="{Binding IsUpdateAvailable}"
+                                        VerticalAlignment="Center"
+                                        CornerRadius="10"
+                                        Padding="6 1"
+                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                                    <TextBlock Text="{Binding UpdateBadgeText}"
+                                               FontSize="11"
+                                               Opacity="0.8"
+                                               VerticalAlignment="Center"/>
+                                </Border>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <TextBlock Text="{Binding OriginText}" FontSize="12" Opacity="0.7"/>
@@ -57,6 +68,10 @@
                                     Orientation="Horizontal"
                                     Spacing="8"
                                     VerticalAlignment="Center">
+                            <Button Content="更新"
+                                    IsVisible="{Binding CanUpdate}"
+                                    Click="OnUpdateEntryClick"
+                                    ToolTip.Tip="更新到 npm 上的最新版本(经 dsh plugin add 包名@latest,与安装同一条通道)"/>
                             <Button x:Name="TogglePluginButton"
                                     Content="{Binding ToggleText}"
                                     IsVisible="{Binding CanToggle}"
@@ -303,6 +318,35 @@
                                             IsEnabled="False"
                                             Click="OnBatchUninstallClick"/>
                                 </Grid>
+
+                                <!-- 插件更新:检查 = 逐个 npm view 查最新版本;全部更新 = 把查到更新的插件逐个升级 -->
+                                <TextBlock Text="插件更新"
+                                           FontSize="12"
+                                           Opacity="0.6"
+                                           Margin="0 6 0 0"/>
+                                <Button x:Name="CheckUpdatesButton"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Center"
+                                        Click="OnCheckUpdatesClick"
+                                        ToolTip.Tip="逐个查询已安装插件在 npm 上的最新版本并标注可更新的插件(只覆盖 npm 包;GitHub 直装的插件查不到版本)"
+                                        IsEnabled="False">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE895;" FontSize="14" VerticalAlignment="Center"/>
+                                        <TextBlock Text="检查更新" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="UpdateAllButton"
+                                        Classes="accent"
+                                        HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Center"
+                                        IsVisible="False"
+                                        Click="OnUpdateAllClick"
+                                        ToolTip.Tip="把查到更新的插件逐个升级到 npm 最新版本"/>
+                                <TextBlock x:Name="UpdateCheckStatusText"
+                                           FontSize="12"
+                                           Opacity="0.7"
+                                           TextWrapping="Wrap"
+                                           IsVisible="False"/>
                             </StackPanel>
 
                             <!-- 目录选项(只在「安装新插件」视图用得上) -->

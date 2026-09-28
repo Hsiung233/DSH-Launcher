@@ -48,6 +48,9 @@ namespace DSH_Launcher.Views
 
                 // 设置页下拉框只有前三个动作(无动作/WebView/浏览器),枚举顺序一致,直接按索引映射
                 this.AfterDshServiceStartedCombo.SelectedIndex = (int)settings.AfterDshServiceStarted;
+                this.AutoRestartOnCrashSwitch.IsChecked = settings.AutoRestartOnCrash;
+                this.NotifyOnServiceExitSwitch.IsChecked = settings.NotifyOnServiceExit;
+                this.NotifyOnUpdateAvailableSwitch.IsChecked = settings.NotifyOnUpdateAvailable;
                 this.WebViewLinkCombo.SelectedIndex = (int)settings.WebViewLink;
                 this.KeepWebViewAliveSwitch.IsChecked = settings.KeepWebViewAlive;
                 this.NpmRegistryCombo.SelectedIndex = (int)settings.NpmRegistry;
@@ -196,6 +199,40 @@ namespace DSH_Launcher.Views
 
             SettingsService.Instance.Update(
                 s => s.ShowMainWindowOnStartup = this.ShowMainWindowOnStartupSwitch.IsChecked == true);
+        }
+
+        private void OnAutoRestartOnCrashChanged(object? sender, RoutedEventArgs e)
+        {
+            if (this._initializing)
+            {
+                return;
+            }
+
+            var enabled = this.AutoRestartOnCrashSwitch.IsChecked == true;
+            SettingsService.Instance.Update(s => s.AutoRestartOnCrash = enabled);
+            DshService.Instance.AppendSystemLog($"[设置] 服务意外退出时自动重启 = {(enabled ? "开启" : "关闭")}");
+        }
+
+        private void OnNotifyOnServiceExitChanged(object? sender, RoutedEventArgs e)
+        {
+            if (this._initializing)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(
+                s => s.NotifyOnServiceExit = this.NotifyOnServiceExitSwitch.IsChecked == true);
+        }
+
+        private void OnNotifyOnUpdateAvailableChanged(object? sender, RoutedEventArgs e)
+        {
+            if (this._initializing)
+            {
+                return;
+            }
+
+            SettingsService.Instance.Update(
+                s => s.NotifyOnUpdateAvailable = this.NotifyOnUpdateAvailableSwitch.IsChecked == true);
         }
 
         /// <summary>

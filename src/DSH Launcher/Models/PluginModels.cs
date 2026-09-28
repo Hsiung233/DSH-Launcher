@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 
+using DSH_Launcher.Services;
+
 namespace DSH_Launcher.Models
 {
     /// <summary>
@@ -70,6 +72,48 @@ namespace DSH_Launcher.Models
 
         /// <summary>卸载按钮的文案:待确认时变成「确认卸载」。</summary>
         public string UninstallText => this._isPendingUninstall ? "确认卸载" : "卸载";
+
+        private string? _latestVersion;
+
+        /// <summary>
+        /// npm 上的最新版本(「检查更新」后回填);未检查或查询失败为 null。
+        /// <para>
+        /// ⚠ 与 <see cref="IsSelected"/> 同一理由必须实现变更通知:列表是虚拟化的,
+        /// 而检查更新是**在列表显示之后**异步回填的,不通知界面就不会刷新。
+        /// </para>
+        /// </summary>
+        public string? LatestVersion
+        {
+            get => this._latestVersion;
+            set
+            {
+                if (string.Equals(this._latestVersion, value, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                this._latestVersion = value;
+                this.RaiseChanged(nameof(this.LatestVersion));
+                this.RaiseChanged(nameof(this.IsUpdateAvailable));
+                this.RaiseChanged(nameof(this.UpdateBadgeText));
+                this.RaiseChanged(nameof(this.CanUpdate));
+            }
+        }
+
+        /// <summary>npm 最新版是否比已装版本更新(判定规则见 <see cref="PluginService.IsUpdateNeeded"/>)。</summary>
+        public bool IsUpdateAvailable =>
+            this.Version is { Length: > 0 }
+            && this.LatestVersion is { Length: > 0 }
+            && PluginService.IsUpdateNeeded(this.Version, this.LatestVersion);
+
+        /// <summary>能否由启动器更新:已安装的包 + npm 上确实查到了更新的版本。</summary>
+        public bool CanUpdate => this.IsInstalled && this.IsUpdateAvailable;
+
+        /// <summary>列表行上的「可更新到 vX」徽标文案;无更新时空串(徽标隐藏)。</summary>
+        public string UpdateBadgeText => this.IsUpdateAvailable ? $"可更新到 v{this.LatestVersion}" : string.Empty;
+
+        private void RaiseChanged(string propertyName)
+            => this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
         /// <summary>Loader 条目 id(用于 cordis.patch.yml 的启停覆盖);不在组合树里时为空。</summary>
         public string Id { get; init; } = string.Empty;

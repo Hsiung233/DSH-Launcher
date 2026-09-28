@@ -133,6 +133,23 @@ namespace DSH_Launcher.Models
         public bool RunDshServiceOnStartup { get; set; }
 
         /// <summary>
+        /// 服务意外退出(崩溃/被误杀,非用户主动停止)时自动重启,默认关闭。
+        /// <para>
+        /// 连续自动重启的次数与退避间隔由 <see cref="Services.WatchdogPolicy"/> 决定
+        /// (最多 3 次,间隔 5/15/30 秒);稳定运行一段时间(5 分钟)后计数会重置,
+        /// 不会因为长期运行中偶发一次崩溃就把「重试额度」用尽。
+        /// 用户手动启停、退出应用都会取消挂起的自动重启。
+        /// </para>
+        /// </summary>
+        public bool AutoRestartOnCrash { get; set; }
+
+        /// <summary>服务意外退出、自动重启或启动失败时发送系统通知,默认开启。</summary>
+        public bool NotifyOnServiceExit { get; set; } = true;
+
+        /// <summary>检测到 @deepseek-ai/dsh 有新版本时发送系统通知,默认开启。</summary>
+        public bool NotifyOnUpdateAvailable { get; set; } = true;
+
+        /// <summary>
         /// 登录系统后自动启动启动器(开机自启动),默认关闭。
         /// <para>
         /// 这是**用户意图**,系统侧的注册项才是实际生效的东西;两者的一致性由
