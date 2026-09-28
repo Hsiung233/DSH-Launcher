@@ -5,7 +5,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,6 +23,11 @@ namespace DSH_Launcher.Services
 
         /// <summary>固定的子命令部分;监听地址与端口由 <see cref="BuildRunArgs"/> 按设置追加。</summary>
         private const string BaseRunArgs = "web --no-open";
+
+        /// <summary>首个默认启用插件级热重载(web profile 默认开启 dsh-hmr 文件监听)的 dsh 版本。</summary>
+        /// <remarks>取 0.1.6 系列的首个发布(0.1.6-alpha.1);npm 上没有 0.1.6 之前的 0.1.5 正式版。
+        /// </remarks>
+        internal const string LiveReloadSinceVersion = "0.1.6-alpha.1";
 
         private Process? _process;
 
@@ -78,13 +82,17 @@ namespace DSH_Launcher.Services
         public bool IsRunning => IsAlive(this._process);
 
         /// <summary>
-        /// 本次运行基线:启动实例时 profile 清单里的 <c>dsh.profile.patchReload</c>(<see cref="CaptureRuntimePatchReload"/>)。
-        /// 运行中的 dsh **永远按启动那一刻读到的磁盘值行事**,之后磁盘再改不影响它 ——
-        /// 所以"启动成功当刻读到的值"就等于运行实例的真实配置,从机制上消除了
-        /// "磁盘配置与运行状态不一致"的窗口(这正是不直接读磁盘的原因)。
-        /// 值只有两档:"live"(缺省,改 cordis.patch.yml 热生效)/"startup"(启停也要重启);
-        /// 空串 = 本次运行不是由启动器拉起的(基线未知,消费方按 dsh 缺省 live 处理)。
+        /// 本次运行的启停生效方式基线(<see cref="CaptureRuntimePatchReload"/>):"live" = 运行中的 dsh 对
+        /// cordis.patch.yml / package.json 的外部改动做热重载(dsh-hmr 监听文件并 reconcile,启停免重启);
+        /// "startup" = 需重启生效。空串 = 本次运行不是由启动器拉起的(基线未知,消费方按 dsh 缺省 live 处理)。
         /// </summary>
+        /// <remarks>
+        /// 热重载能力来自 base bundle 的 <c>@deepseek-ai/dsh-hmr</c>:它用 chokidar 监听
+        /// <c>cordis.patch.yml</c>、顶层 patch 文件与 <c>package.json</c>,变更即调
+        /// <c>reconcileProfilePatches</c> 进程内启停插件 fiber(2026-09-28 对 0.1.7-rc.2 端到端实测,
+        /// 外部写覆盖免重启双向生效)。该能力在 0.1.6-alpha.1 起的 web profile 默认开启
+        /// (headless/SDK/ACP profile 在 YAML 里禁用 hmr);此前的版本没有插件级热重载,按 startup 处理。
+        /// </remarks>
         public string RuntimePatchReload { get; private set; } = string.Empty;
 
         public string? InstalledVersion { get; private set; }
@@ -585,40 +593,24 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 读取"本次运行基线"(<see cref="RuntimePatchReload"/>):在启动成功当刻读 profile 清单,
-        /// 之后不再读 —— 运行实例用的就是这份(启动当刻的)配置,哪怕磁盘随后被改。
-        /// 语义对齐 dsh 的 loadProfileDirectory:值必须是 "live"/"startup"(否则启动会失败),
-        /// 清单缺失该字段时按 "live"。
+        /// 确定本次运行的启停生效方式基线(<see cref="RuntimePatchReload"/>),按已安装的 dsh 版本:
+        /// 0.1.6-alpha.1 起的 web profile 默认启用 dsh-hmr 文件监听(外部改 cordis.patch.yml 免重启热生效),
+        /// 更早的版本没有该能力,按 startup 处理。版本未知(尚未探测到,或用户手动在应用外启动)按 live 处理。
         /// </summary>
         private void CaptureRuntimePatchReload()
         {
-            try
+            if (this.InstalledVersion is null
+                || CompareVersions(this.InstalledVersion, LiveReloadSinceVersion) >= 0)
             {
-                using var document = JsonDocument.Parse(File.ReadAllText(PluginService.ManifestPath));
-                var root = document.RootElement;
-                if (root.ValueKind == JsonValueKind.Object
-                    && root.TryGetProperty("dsh", out var dsh) && dsh.ValueKind == JsonValueKind.Object
-                    && dsh.TryGetProperty("profile", out var profile) && profile.ValueKind == JsonValueKind.Object
-                    && profile.TryGetProperty("patchReload", out var patchReload)
-                    && patchReload.ValueKind == JsonValueKind.String
-                    && string.Equals(patchReload.GetString(), "startup", StringComparison.Ordinal))
-                {
-                    this.RuntimePatchReload = "startup";
-                }
-                else
-                {
-                    this.RuntimePatchReload = "live";
-                }
-            }
-            catch (Exception ex)
-            {
-                // 清单读不到不代表没启动成功(文件可能正被 dsh plugin 改写):按 dsh 缺省处理并留证
                 this.RuntimePatchReload = "live";
-                AppLogService.Write($"[启动] 读取 patchReload 基线失败({ex.Message}),按 live 处理。");
-                return;
+            }
+            else
+            {
+                this.RuntimePatchReload = "startup";
             }
 
-            AppLogService.Write($"[启动] patchReload 基线 = {this.RuntimePatchReload}"
+            AppLogService.Write($"[启动] 已安装 dsh v{this.InstalledVersion ?? "(未知)"},"
+                + $"启停基线 = {this.RuntimePatchReload}"
                 + (this.RuntimePatchReload == "live" ? "(启停覆盖热生效)" : "(启停覆盖需重启生效)"));
         }
 

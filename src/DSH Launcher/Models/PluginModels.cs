@@ -129,16 +129,16 @@ namespace DSH_Launcher.Models
             _ => "组合条目",
         };
 
-        /// <summary>状态说明:已启用 / 已禁用 / 未参与组合;等待重启生效时追加标注。</summary>
+        /// <summary>状态说明:已启用 / 已禁用 / 未参与组合;等待生效的刚安装插件追加标注。</summary>
         public string StateText =>
             (this.InComposition ? (this.IsActive ? "已启用" : "已禁用") : "未参与组合")
-            + (this.AwaitingRestart ? " · 重启后生效" : string.Empty);
+            + (this.AwaitingRestart ? " · 待 dsh 加载" : string.Empty);
 
         /// <summary>启停按钮的文案(不按当前状态命名:按钮执行的是切换动作)。</summary>
         public string ToggleText => this.IsActive ? "禁用" : "启用";
 
         public string ToggleToolTip => this.CanToggle
-            ? "在 profile 的 cordis.patch.yml 里写入启停覆盖(重启/重载后生效)"
+            ? "在 profile 的 cordis.patch.yml 里写入启停覆盖(dsh 运行中自动热重载,免重启)"
             : this.InComposition
                 ? "dsh 自带条目由 dsh 预设管理,启动器不对其启停;有历史覆盖时可用「恢复默认」清理"
                 : "该条目不在组合树里,无法启停";

@@ -23,10 +23,10 @@ namespace DSH_Launcher.Services
     /// 命令一律走 <c>dsh plugin --profile &lt;name&gt; ...</c>(官方入口:转发给 profile 目录下的 pnpm,
     /// 并在成功后重新对齐 bundles 列表),启动器不直接调 pnpm,以免与官方行为分叉。
     ///
-    /// 启停没有官方 CLI:启用/禁用通过往 profile 的 <c>cordis.patch.yml</c> 里写 id 定向的
-    /// <c>disabled</c> 覆盖实现(dsh 的 Web 设置页也把"写回启停"列为未做的后续工作,
-    /// 见 @deepseek-ai/dsh-client-ui-settings-plugin-inventory 的已知限制)。
-    /// 启动器只维护标记注释之间的区块,用户自己的补丁条目不受影响。
+    /// 启停路径:官方插件管理页(0.1.6+)提供单条启停的 UI(批量/离线仍无入口),启动器通过往
+    /// profile 的 <c>cordis.patch.yml</c> 里写 id 定向的 <c>disabled</c> 覆盖实现,dsh-hmr 会监听该文件
+    /// 热重载(dsh 运行中免重启)。两套机制写同一文件的不同区块可叠加。
+    /// 启动器只维护标记注释之间的区块,用户自己的补丁条目(含官方页写入的)不受影响。
     /// </summary>
     public sealed partial class PluginService
     {
@@ -685,7 +685,8 @@ namespace DSH_Launcher.Services
 
                 WriteOverrides(overrides);
                 this.AppendSystemLog($"批量{(enabled ? "启用" : "禁用")} {targets.Count} 个条目"
-                    + $"(已写入 {PatchFilePath},重启或重载 dsh 后生效)");
+                    + $"(已写入 {PatchFilePath},"
+                    + (DshService.Instance.IsRunning ? "运行中的 dsh 会热重载" : "下次启动 dsh 时生效") + ")");
                 return true;
             }
             catch (Exception ex)
