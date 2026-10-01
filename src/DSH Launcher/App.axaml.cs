@@ -17,6 +17,11 @@ public partial class App : Application
     private MainWindow? _window;
     private TrayService? _tray;
 
+    // 主窗口"隐藏到托盘前是否最大化"/"是否显示过":
+    // 复用显示前修正平台层 _showWindowState 用(说明见 ShowMainWindow)。
+    private bool _mainWindowHiddenMaximized;
+    private bool _mainWindowShownOnce;
+
     /// <summary>true 表示用户已从托盘菜单选择退出,此时窗口关闭不再拦截。</summary>
     private bool _exitRequested;
 
@@ -374,6 +379,13 @@ public partial class App : Application
         // 隐藏到托盘前记录窗口位置/大小/最大化状态,下次启动恢复
         _window?.SaveWindowState();
 
+        // 记录隐藏时的最大化状态:重新显示前要用它修正平台层记录的显示状态(见 ShowMainWindow)
+        if (_window is not null)
+        {
+            _mainWindowHiddenMaximized = _window.WindowState == Avalonia.Controls.WindowState.Maximized;
+            _mainWindowShownOnce = true;
+        }
+
         // 隐藏到托盘,进程继续运行
         e.Cancel = true;
         _window?.Hide();
@@ -526,8 +538,20 @@ public partial class App : Application
             return;
         }
 
+        // 复用显示前按"隐藏时的状态"显式重设窗口状态(仅对隐藏过、当前不可见的窗口):
+        // Win32 的 Show() 重放的是"首次显示前"记录的 _showWindowState,而用户此后
+        // 点标题栏"向下还原/最大化"等外部操作只更新 Avalonia 托管缓存,不会回写平台层
+        // 记录。不重设的话,托盘收起再打开会回到首次显示时的状态,而不是收起时的状态。
+        if (_mainWindowShownOnce && !_window.IsVisible)
+        {
+            _window.WindowState = _mainWindowHiddenMaximized
+                ? Avalonia.Controls.WindowState.Maximized
+                : Avalonia.Controls.WindowState.Normal;
+        }
+
         _window.Show();
         _window.Activate();
+        _mainWindowShownOnce = true;
     }
 
     private void ExitApplication()

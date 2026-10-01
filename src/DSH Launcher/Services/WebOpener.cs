@@ -31,6 +31,17 @@ namespace DSH_Launcher.Services
             /// 适配器处理改写,拿它比较会导致每次从托盘打开都白白重载一遍页面。
             /// </summary>
             public string RequestedUrl { get; set; } = string.Empty;
+
+            /// <summary>
+            /// 窗口隐藏时的最大化状态。复用显示前要用它显式重设一次窗口状态:
+            /// Win32 平台的 <c>Show()</c> 以"首次显示前"记录的 <c>_showWindowState</c> 显示窗口,
+            /// 而用户此后点标题栏"向下还原/最大化"等外部操作只更新 Avalonia 的托管缓存,
+            /// 不会回写平台层记录(见 <see cref="WindowStateService"/> 的 ApplyMaximized 注释)。
+            /// 不重设的话:首次显示是最大化,之后即使每次关闭时窗口都已还原,
+            /// 每次复用打开也都会被强制回最大化(反之,曾以 Normal 首显的窗口,
+            /// 最大化状态下收起再打开会被错误还原)。
+            /// </summary>
+            public bool HiddenMaximized { get; set; }
         }
 
         private static WebViewSession? _session;
@@ -245,6 +256,18 @@ namespace DSH_Launcher.Services
                     AppLogService.Write("[WebView] 复用已有窗口(直接显示,不重载)");
                 }
 
+                // 复用显示前按"隐藏时的状态"显式重设窗口状态(仅对当前不可见的窗口):
+                // Win32 的 Show() 重放的是"首次显示前"记录的 _showWindowState,而用户此后
+                // 点标题栏"向下还原/最大化"等外部操作不会回写它。不重设的话,即使每次关闭
+                // 时窗口都是 Normal,重新打开也会变回首次显示时的最大化 —— 这正是
+                // "关闭时明明不是最大化,打开却变成最大化"的原因,与位置/大小记录无关。
+                if (!existing.Window.IsVisible)
+                {
+                    existing.Window.WindowState = existing.HiddenMaximized
+                        ? Avalonia.Controls.WindowState.Maximized
+                        : Avalonia.Controls.WindowState.Normal;
+                }
+
                 existing.Window.Show();
                 existing.Window.Activate();
                 return;
@@ -371,6 +394,8 @@ namespace DSH_Launcher.Services
 
                     // 保留窗口与 WebView2 适配器:下次打开只是一次 Show(),不必再付冷启动的代价
                     e.Cancel = true;
+                    // 记录隐藏时的最大化状态:复用显示前要用它修正平台层记录的显示状态(见 OpenInWebView)
+                    _session!.HiddenMaximized = window.WindowState == Avalonia.Controls.WindowState.Maximized;
                     window.Hide();
                     AppLogService.Write("[WebView] 已隐藏窗口(保留 WebView2 进程,便于快速再次打开)");
                     ScheduleIdleClose();
