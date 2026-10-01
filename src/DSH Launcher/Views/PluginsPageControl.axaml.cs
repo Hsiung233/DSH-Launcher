@@ -191,13 +191,15 @@ namespace DSH_Launcher.Views
             // ③ 把最近一次检查更新的结果重新套用到新条目上(徽标不因刷新而丢)
             this.ApplyLatestVersions();
 
-            // ④ pnpm 状态:安装/卸载都由 dsh plugin 转发给它,缺失时只提示、不禁用页面(启停不依赖 pnpm)
+            // ④ pnpm 状态:安装/卸载都由 dsh plugin 转发给它,缺失时只提示、不禁用页面(启停不依赖 pnpm);
+            //   同时在右侧操作行亮出「修复」按钮,一键执行安装命令,成功后自动重探
             this.PnpmBadge.IsVisible = !snapshot.PnpmAvailable;
+            this.PnpmFixButton.IsVisible = !snapshot.PnpmAvailable;
             if (!snapshot.PnpmAvailable)
             {
                 ToolTip.SetTip(this.PnpmBadge,
                     "未检测到可用的 pnpm:安装/卸载插件会经 dsh plugin 转发给 pnpm。"
-                    + "可执行 npm install -g pnpm@10 修复后点「刷新」。");
+                    + $"可点右侧「修复」(执行 {PluginService.PnpmInstallCommand})修复后自动重新检测。");
             }
 
             // 计数按**包**算已安装数(条目是 entry 粒度,一个包会派生多条),按**条**算列表
@@ -208,7 +210,7 @@ namespace DSH_Launcher.Views
             if (!snapshot.PnpmAvailable)
             {
                 notes.Add("⚠ 未检测到可用的 pnpm:安装/卸载插件不可用(启用/禁用不依赖 pnpm)。"
-                    + "可执行 npm install -g pnpm@10 修复后点「刷新」。");
+                    + $"可点右上「修复」一键安装(执行 {PluginService.PnpmInstallCommand})。");
             }
 
             if (snapshot.Warning is not null)
@@ -553,6 +555,7 @@ namespace DSH_Launcher.Views
             var busy = this._loading || this._catalogLoader.IsLoading || this._plugins.IsBusy;
             this.PluginsProgress.IsActive = busy;
             this.RefreshPluginsButton.IsEnabled = !busy;
+            this.PnpmFixButton.IsEnabled = !busy;
             this.RevealProfileButton.IsEnabled = !busy;
             this.RefreshCatalogButton.IsEnabled = !busy;
             this.InstallPluginButton.IsEnabled = !busy;
@@ -830,6 +833,33 @@ namespace DSH_Launcher.Views
         private void OnShowAllEntriesClick(object? sender, RoutedEventArgs e) => this.ApplyEntryFilter();
 
         private void OnRefreshPluginsClick(object? sender, RoutedEventArgs e) => _ = this.RefreshAsync(forcePnpmProbe: true);
+
+        /// <summary>
+        /// 「修复」按钮:一键执行 pnpm 安装命令并流式回显到日志浮窗,
+        /// 成功后强制重探并刷新整页(徽标/按钮立即消失,无需用户再手动点刷新)。
+        /// </summary>
+        private async Task FixPnpmAsync()
+        {
+            // 忙碌时服务层会用互斥量拒绝,这里提前拦截避免日志里混入无意义的拒绝信息
+            if (this._plugins.IsBusy || this._loading)
+            {
+                return;
+            }
+
+            try
+            {
+                if (await this._plugins.RepairPnpmAsync())
+                {
+                    await this.RefreshAsync(forcePnpmProbe: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                this._plugins.AppendLog($"[修复 pnpm 失败] {ex.Message}");
+            }
+        }
+
+        private void OnPnpmFixClick(object? sender, RoutedEventArgs e) => _ = this.FixPnpmAsync();
 
         private void OnRevealProfileClick(object? sender, RoutedEventArgs e) => this._plugins.OpenProfileDirectory();
 

@@ -204,6 +204,15 @@
                         <TextBlock Text="插件目录" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
+                <Button x:Name="PnpmFixButton"
+                        IsVisible="False"
+                        Click="OnPnpmFixClick"
+                        ToolTip.Tip="执行 npm install -g pnpm --allow-scripts=pnpm 安装 pnpm(输出见下方日志浮窗)">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE90F;" FontSize="14" VerticalAlignment="Center"/>
+                        <TextBlock Text="修复" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
                 <Button x:Name="RefreshPluginsButton"
                         Click="OnRefreshPluginsClick">
                     <StackPanel Orientation="Horizontal" Spacing="6">

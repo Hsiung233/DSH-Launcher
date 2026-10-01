@@ -35,6 +35,13 @@ namespace DSH_Launcher.Services
         /// <summary>插件所在的 profile。启动器运行的是 <c>dsh web</c>,对应 profile 名 web。</summary>
         public const string ProfileName = "web";
 
+        /// <summary>
+        /// 修复 pnpm 的统一命令。npm 12+ 默认拦截第三方包的 install scripts,而 pnpm 的 npm 包
+        /// 靠 postinstall 下载原生二进制 —— 不放行脚本会「装了但用不了」(shim 指向不存在的文件),
+        /// 所以必须带 <c>--allow-scripts=pnpm</c>。所有提示文案与「修复」按钮共用,避免口径不一。
+        /// </summary>
+        public const string PnpmInstallCommand = "npm install -g pnpm --allow-scripts=pnpm";
+
         private static readonly JsonDocumentOptions ManifestReadOptions = new()
         {
             AllowTrailingCommas = true,
@@ -797,6 +804,49 @@ namespace DSH_Launcher.Services
             this._pnpmAvailable = null;
         }
 
+        /// <summary>
+        /// 一键修复 pnpm:执行 <see cref="PnpmInstallCommand"/> 并把输出逐行回显到页面日志,
+        /// 成功后作废探测缓存(下一次刷新会重新探测)。与插件变更操作共用同一把互斥量 ——
+        /// 虽然全局 npm 安装不直接改 profile,但并发跑两条子进程会让日志交叉、忙碌态互相踩。
+        /// </summary>
+        public async Task<bool> RepairPnpmAsync()
+        {
+            if (!this._operationGate.Wait(0))
+            {
+                this.AppendLog("已有插件操作正在进行,修复 pnpm 已忽略,请等它结束后重试。\r\n");
+                return false;
+            }
+
+            this._busy = true;
+            StateChanged?.Invoke();
+            try
+            {
+                this.AppendLog($"[修复 pnpm] {PnpmInstallCommand}\r\n");
+                var exitCode = await ChildProcessRunner.StreamAsync(
+                    PnpmInstallCommand, line => this.AppendLog(line));
+                this.AppendLog($"[退出代码 {exitCode}]");
+
+                if (exitCode == 0)
+                {
+                    // 探测结果作废:界面随后会强制重探,立即反映“pnpm 已就绪”
+                    this.InvalidatePnpmProbe();
+                    this.AppendLog("pnpm 安装完成。\r\n");
+                }
+                else
+                {
+                    this.AppendLog("pnpm 安装失败,请按上方输出排查(网络/代理/npm 源)后重试。\r\n");
+                }
+
+                return exitCode == 0;
+            }
+            finally
+            {
+                this._busy = false;
+                this._operationGate.Release();
+                StateChanged?.Invoke();
+            }
+        }
+
         /// <summary>打开 profile 目录,便于用户手工查看/编辑清单与补丁层。</summary>
         public void OpenProfileDirectory()
         {
@@ -831,7 +881,7 @@ namespace DSH_Launcher.Services
                 if (!await this.CheckPnpmAvailableAsync())
                 {
                     this.AppendLog("pnpm 不可用:dsh plugin 会把参数转发给 profile 目录下的 pnpm。"
-                        + "请先安装/修复 pnpm(例如 npm i -g pnpm@10),再重试。\r\n");
+                        + $"请先安装/修复 pnpm(例如 {PnpmInstallCommand} 或点页面右侧的「修复」),再重试。\r\n");
                 }
 
                 var exitCode = await DshCli.RunStreamingAsync(
@@ -860,7 +910,7 @@ namespace DSH_Launcher.Services
             {
                 // 命令明确报"找不到 pnpm":探测结果作废,下一次刷新会重探(用户可能刚装上)
                 this.InvalidatePnpmProbe();
-                this.AppendLog("提示:未找到 pnpm。请先执行 npm install -g pnpm 后重试。\r\n");
+                this.AppendLog($"提示:未找到 pnpm。请先执行 {PnpmInstallCommand} 或点页面右侧的「修复」后重试。\r\n");
             }
             else if (exitCode != 0)
             {
