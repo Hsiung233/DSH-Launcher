@@ -173,7 +173,7 @@ dotnet test "tests/DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 
 `Build-Installer.ps1` 默认先调用 `Build-Publish.ps1`（`-NoPublish` 可跳过），自动查找 `ISCC.exe`
 （`-ISCC` → PATH → 注册表 → 常见安装位置），并在编译前校验 `installer.iss` 的 `MyPublishDir` 里
-确实有程序文件,最后产出 `setup\DSHLauncher-Setup-x64.exe`（同时打印文件大小与 SHA256）。
+确实有程序文件,最后产出 `build\DSHLauncher-Setup-Win-x64.exe`（同时打印文件大小与 SHA256）。
 
 不用脚本的等价手工步骤：
 
@@ -181,8 +181,23 @@ dotnet test "tests/DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 dotnet publish "src/DSH Launcher/DSH Launcher.csproj" -p:PublishProfile="win_x64" -c Release
 ```
 
-再用 Inno Setup 的 IDE 打开 `tools/BuildSetup/installer.iss` 编译（或 `ISCC.exe "tools\BuildSetup\installer.iss"`），产物落在仓库根的 `setup\` 下。
+再用 Inno Setup 的 IDE 打开 `tools/BuildSetup/installer.iss` 编译（或 `ISCC.exe "tools\BuildSetup\installer.iss"`），产物落在仓库根的 `build\` 下。
 发布为框架依赖版，要求用户机器已装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
+
+### 打包绿色版压缩包（Portable）
+
+```powershell
+# 发布 + 压缩，一步到位
+.\Build-Portable.ps1
+
+# 刚跑完 Build-Installer.ps1 的话，复用发布目录直接压缩
+.\Build-Portable.ps1 -NoPublish
+```
+
+把发布目录整体压缩成 `build\DSHLauncher-Portable-Win-x64.zip`，解压即用，同样要求
+[.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
+发布目录位置从 `win_x64.pubxml` 的 `<PublishDir>` 读出，与发布配置不会漂移；zip 内不含 `.pdb`。
+CI 在打完安装包后会用 `-NoPublish` 复用同一份发布目录再打绿色版，两者一起随 GitHub Release 发布。
 
 安装程序内置 .NET 10 Desktop Runtime 检测：缺失时引导用户到官网下载后再装；支持中文向导、
 开始菜单/桌面快捷方式与卸载。
@@ -266,10 +281,11 @@ tests/DSH Launcher.Tests/         单元测试（MSTest，覆盖上表中的纯�
 
 Build-Publish.ps1                 发布到 src\DSH Launcher\bin\Publish 的脚本（清空旧产物、结束运行中的实例）
 Build-Installer.ps1               先调 Build-Publish.ps1 发布，再用 Inno Setup 编译安装包
-tools/BuildSetup/                 安装包脚本（产物落仓库根 setup\）
+Build-Portable.ps1                把发布目录压缩成绿色版 zip（-NoPublish 复用已有发布目录）
+tools/BuildSetup/                 安装包脚本（产物落仓库根 build\）
   installer.iss                   Inno Setup 安装包脚本
   Languages/ChineseSimplified.isl 中文向导语言文件
-setup/                            安装包产物目录（不进版本库，全新克隆里不存在）
+build/                            产物目录：安装包 exe + 绿色版 zip（不进版本库，全新克隆里不存在）
 docs/screenshots/                 README 中使用的界面截图
 .github/workflows/build.yml       CI：Release 构建 + 跑测试
 .github/skills/                   仓库自带的界面验证 skill（UI Automation，见 SKILL.md）

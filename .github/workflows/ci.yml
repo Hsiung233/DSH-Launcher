@@ -64,6 +64,10 @@ jobs:
       - name: 构建安装包
         run: ./Build-Installer.ps1
 
+      # 复用上面发布出来的目录,不再重复发布
+      - name: 构建绿色版压缩包
+        run: ./Build-Portable.ps1 -NoPublish
+
       # 双保险:打完包后核对 exe 的 FileVersion 确实等于 tag(防止上面的替换没生效)。
       - name: 校验产物版本与 tag 一致
         shell: pwsh
@@ -83,15 +87,19 @@ jobs:
             (($t.Revision -ge 0) -and ($v.Revision -ne $t.Revision))
           if ($mismatch) { throw "应用版本($ver)与 tag($tag)不一致,发布中止。" }
 
-      - name: 上传安装包
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: installer
-          path: setup/*.exe
+          name: release-artifacts
+          path: |
+            build/*.exe
+            build/*.zip
           if-no-files-found: error
 
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: setup/*.exe
+          files: |
+            build/*.exe
+            build/*.zip
           generate_release_notes: true

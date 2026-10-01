@@ -12,4 +12,3 @@
 
 # Inno Setup 安装包产物(tools/BuildSetup/installer.iss 的 OutputDir 指向这里)
 /build
-/setup

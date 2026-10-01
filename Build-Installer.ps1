@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    编译 tools\BuildSetup\installer.iss,产物落在仓库根的 setup\DSHLauncher-Setup-x64.exe。
+    编译 tools\BuildSetup\installer.iss,产物落在仓库根的 build\DSHLauncher-Setup-Win-x64.exe。
 
 .DESCRIPTION
     默认先把应用发布一遍(调用根目录的 Build-Publish.ps1),再用 Inno Setup 的命令行编译器 ISCC
@@ -162,7 +162,7 @@ if (-not $outputDir -or $outputDir -eq '.') {
 }
 $installerDir = $installerDir.TrimEnd('\')
 
-# 产物目录不进版本库(.gitignore 的 /setup/*.exe),全新克隆里它不存在 ——
+# 产物目录不进版本库(.gitignore 的 /build),全新克隆里它不存在 ——
 # 自己建好,别让 ISCC 或后面的校验因为"目录没有"而报一个看不懂的错。
 if (-not (Test-Path -LiteralPath $installerDir)) {
     New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
