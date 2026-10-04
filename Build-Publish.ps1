@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    把 DSH Launcher 发布到 bin\Publish(供 Build-Installer.ps1 打包)。.DESCRIPTION
+    把 DSH Launcher 发布到仓库根的 build\DSHLauncher-Binary-Win-x64(供 Build-Installer.ps1 打包)。.DESCRIPTION
     使用 Properties\PublishProfiles 下的发布配置(默认 win_x64,框架依赖版)。
     实际输出目录从 .pubxml 的 <PublishDir> 读出,以保证与 installer.iss 的 MyPublishDir 一致。
 
@@ -48,7 +48,7 @@ $profilePath = Join-Path $projectDir "Properties\PublishProfiles\$PublishProfile
 
 <#
     取 .pubxml 里声明的 PublishDir。相对路径由 MSBuild 按【项目目录】解析
-    (所以 bin\Publish\x 指的是 DSH Launcher\bin\Publish\x)。
+    (所以 ..\..\build\x 指的是仓库根的 build\x)。
 #>
 function Get-PublishDirFromProfile {
     param([Parameter(Mandatory)] [string] $Path)
@@ -94,8 +94,8 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 
 $declaredPublishDir = Get-PublishDirFromProfile -Path $profilePath
 if (-not $declaredPublishDir) {
-    Write-Warning "$PublishProfile.pubxml 未声明 <PublishDir>,按 bin\Publish\$PublishProfile 处理。"
-    $declaredPublishDir = "bin\Publish\$PublishProfile"
+    Write-Warning "$PublishProfile.pubxml 未声明 <PublishDir>,按 ..\..\build\DSHLauncher-Binary-Win-x64 处理。"
+    $declaredPublishDir = "..\..\build\DSHLauncher-Binary-Win-x64"
 }
 $publishDir = Resolve-PublishDir -ProjectDir $projectDir -RelativeOrAbsolute $declaredPublishDir
 

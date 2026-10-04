@@ -163,7 +163,7 @@ dotnet test "tests/DSH Launcher.Tests/DSH Launcher.Tests.csproj"
 # 发布 + 编译安装包，一步到位
 .\Build-Installer.ps1
 
-# 只发布（输出到 src\DSH Launcher\bin\Publish\win_x64）
+# 只发布（输出到 build\DSHLauncher-Binary-Win-x64）
 .\Build-Publish.ps1
 ```
 
@@ -279,7 +279,7 @@ tests/DSH Launcher.Tests/         单元测试（MSTest，覆盖上表中的纯�
   WatchdogPolicyTests.cs          看门狗决策表（退避序列/次数上限/计数重置）
   PluginUpdateTests.cs            插件更新判定与 `npm view` 输出解析
 
-Build-Publish.ps1                 发布到 src\DSH Launcher\bin\Publish 的脚本（清空旧产物、结束运行中的实例）
+Build-Publish.ps1                 发布到仓库根 build\DSHLauncher-Binary-Win-x64 的脚本（清空旧产物、结束运行中的实例）
 Build-Installer.ps1               先调 Build-Publish.ps1 发布，再用 Inno Setup 编译安装包
 Build-Portable.ps1                把发布目录压缩成绿色版 zip（-NoPublish 复用已有发布目录）
 tools/BuildSetup/                 安装包脚本（产物落仓库根 build\）

@@ -8,8 +8,8 @@
     需已安装 .NET 10 Desktop Runtime),再把发布目录整体压缩成 zip;-NoPublish 则直接
     压缩当前发布目录(例如刚跑完 Build-Installer.ps1 之后接着打绿色版)。
 
-    发布目录位置从 win_x64.pubxml 的 <PublishDir> 读出,与 Build-Publish.ps1 的解析规则
-    一致,不会和发布配置漂移。zip 内不含 .pdb(即使发布目录里残留了,也会被剔除)。
+    发布目录位置从 win_x64.pubxml 的 <PublishDir> 读出，与 Build-Publish.ps1 的解析规则一致，
+    不会和发布配置漂移。zip 内不含 .pdb(即使发布目录里残留了,也会被剔除)。
 
 .EXAMPLE
     .\Build-Portable.ps1
@@ -58,7 +58,7 @@ function Get-PublishDirFromProfile {
         Where-Object { $_.InnerText.Trim() } |
         Select-Object -First 1
 
-    if ($null -eq $declared) { return "bin\Publish\win_x64" }
+    if ($null -eq $declared) { return "..\..\build\DSHLauncher-Binary-Win-x64" }
     return $declared.InnerText.Trim()
 }
 

@@ -16,7 +16,7 @@
 #define MyAppNameNoSpace "DSHLauncher"
 #define MyAppPublisher "DSH Launcher"
 #define MyAppExeName "DSH Launcher.exe"
-#define MyPublishDir "..\..\src\DSH Launcher\bin\Publish\win_x64"
+#define MyPublishDir "..\..\build\DSHLauncher-Binary-Win-x64"
 #define MyAppVersion GetVersionNumbersString(MyPublishDir + "\" + MyAppExeName)
 #if MyAppVersion == ""
 #define MyAppVersion "1.0.0"
