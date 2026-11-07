@@ -286,7 +286,7 @@ namespace DSH_Launcher.Views
 
         private async void OnInstallClick(object? sender, RoutedEventArgs e)
         {
-            // npm 安装前先确认 Node.js 环境:缺失时弹窗引导去官网下载,不执行安装
+            // 全局安装前先确认 Node.js 环境:缺失时弹窗引导去官网下载,不执行安装
             if (!await this.EnsureNodeEnvironmentAsync())
             {
                 return;
@@ -304,10 +304,10 @@ namespace DSH_Launcher.Views
             }
         }
 
-        /// <summary>更新到 npm 上的最新版本;完成后重新检查,按钮随之消失。</summary>
+        /// <summary>更新到 registry 上的最新版本;完成后重新检查,按钮随之消失。</summary>
         private async void OnUpdateClick(object? sender, RoutedEventArgs e)
         {
-            // 更新同样是 npm install -g,装前一样要确认 Node.js 环境
+            // 更新同样走全局安装(npm / pnpm 随安装来源),装前一样要确认环境
             if (!await this.EnsureNodeEnvironmentAsync())
             {
                 return;
@@ -326,7 +326,8 @@ namespace DSH_Launcher.Views
         }
 
         /// <summary>
-        /// npm 安装(dsh)前的 Node.js 环境检查:缺失时弹「前往官网下载 / 确定」弹窗并返回 false,不执行安装。
+        /// 全局安装(dsh)前的环境检查:缺失时弹「前往官网下载 / 确定」弹窗并返回 false,不执行安装。
+        /// 具体查什么由 <see cref="DshService.HasNodeEnvironmentAsync"/> 决定(Node.js + 对应的包管理器)。
         /// </summary>
         private async Task<bool> EnsureNodeEnvironmentAsync()
         {
@@ -375,7 +376,8 @@ namespace DSH_Launcher.Views
                     Title = "未检测到 Node.js 环境",
                     Content = new SelectableTextBlock
                     {
-                        Text = "安装 @deepseek-ai/dsh 需要 Node.js(自带 npm)。当前电脑上未检测到可用的 Node.js 环境,"
+                        Text = "安装 @deepseek-ai/dsh 需要 Node.js 及其包管理器(npm;pnpm 全局安装的用 pnpm)。"
+                            + "当前电脑上未检测到可用的 Node.js 环境或对应命令,"
                             + "请先前往 Node.js 官网下载安装,完成后再回来重试安装。",
                         TextWrapping = TextWrapping.Wrap,
                     },
@@ -559,6 +561,7 @@ namespace DSH_Launcher.Views
         /// <summary>
         /// 查询环境信息(Node/npm 版本、dsh 路径)。首次需起子进程(约 1 秒),之后用缓存;
         /// 刷新时只重新拼字符串,供页面加载与状态变化共用。
+        /// 安装来源(npm / pnpm)不走本方法:它是 <see cref="DshService.GetInstalledVersionAsync"/> 的副产物。
         /// </summary>
         private async Task EnsureEnvironmentLoadedAsync()
         {
@@ -618,6 +621,7 @@ namespace DSH_Launcher.Views
                 $"运行状态 : {state}",
                 $"应用版本 : {appVersion}",
                 $"安装版本 : {(dsh.InstalledVersion is string iv ? "v" + iv : "未安装")}",
+                $"安装方式 : {dsh.InstalledBy.Describe()}",
                 $"Node.js  : {this._envNode ?? "未知"}",
                 $"npm      : {this._envNpm ?? "未知"}",
                 $"dsh 路径 : {this._envDshPath ?? "未找到"}",

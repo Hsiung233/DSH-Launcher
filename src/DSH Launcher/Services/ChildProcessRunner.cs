@@ -34,9 +34,13 @@ namespace DSH_Launcher.Services
         /// <summary>
         /// 静默执行一条命令行并捕获输出(不抛异常之外的任何副作用;失败由调用方决定怎么上报)。
         /// </summary>
-        public static async Task<CaptureResult> CaptureAsync(string command)
+        /// <param name="nodePath">
+        /// 要写入子进程的 <c>NODE_PATH</c>;空串表示不动环境。
+        /// 只有 dsh 命令需要(见 <see cref="DshCli.ResolveNodePathFor"/>),其余探测保持原样。
+        /// </param>
+        public static async Task<CaptureResult> CaptureAsync(string command, string nodePath = "")
         {
-            using var process = StartShell(command);
+            using var process = StartShell(command, nodePath);
 
             // 必须先 Start 再读 StandardOutput,否则抛
             // "StandardOut has not been redirected or the process hasn't started yet"
@@ -54,9 +58,9 @@ namespace DSH_Launcher.Services
         /// 执行一条命令行并把输出**逐行**回调(用于需要实时反馈的操作,如安装/卸载插件);
         /// 返回退出码。回调可能在线程池线程上触发。
         /// </summary>
-        public static async Task<int> StreamAsync(string command, Action<string> onLine)
+        public static async Task<int> StreamAsync(string command, Action<string> onLine, string nodePath = "")
         {
-            using var process = StartShell(command);
+            using var process = StartShell(command, nodePath);
             process.EnableRaisingEvents = true;
 
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -88,10 +92,15 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>按平台 shell 规则启动一个隐藏的子进程(Windows 走 cmd.exe /c,类 Unix 走登录 shell)。</summary>
-        private static Process StartShell(string command)
+        private static Process StartShell(string command, string nodePath)
         {
             var startInfo = PlatformProcess.CreateShellStartInfo(
                 command, redirectOutput: true, rawByteOutput: true);
+
+            if (nodePath.Length > 0)
+            {
+                startInfo.Environment["NODE_PATH"] = nodePath;
+            }
 
             // 统一注入 npm 源 / 代理:这里是所有非 dsh web 子进程的公共出口,
             // 所以只需在这一处注入,不必在每个调用点重复

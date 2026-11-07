@@ -11,7 +11,8 @@
 ## 功能特性
 
 ### 服务管理
-- **一键安装 / 更新**：探测 `dsh` 是否安装，显示已安装版本与 npm 上的最新版本，有更新时给出「更新」按钮。
+- **一键安装 / 更新**：探测 `dsh` 是否安装（npm 与 pnpm 全局安装都认），显示已安装版本与 registry 上的最新版本，有更新时给出「更新」按钮；安装与更新跟随已有安装来源（pnpm 装的走 `pnpm add -g`，否则走 `npm install -g`）。
+- **pnpm 全局安装的运行兼容**：pnpm 12 的全局安装默认启用全局虚拟库（包实体在 `store/v11/links`），而 `PNPM_HOME\bin\dsh.cmd` 这个 PATH 上的 shim 不自带 `NODE_PATH` —— 直接跑会以 `No usable native binding found for node-addon-require-builtin-win32-x64-msvc` 崩溃。启动器启动 dsh（以及 `dsh plugin` 子命令）时按 pnpm 的全局项目目录自动补齐 `NODE_PATH`，日志里会写明注入的路径。
 - **启动 / 停止 / 重启**：通过 `dsh web` 启动服务，自动从输出中解析 Web 地址（形如 `http://127.0.0.1:3080/?token=...`）。
 - **看门狗自动重启**（默认关闭）：服务稳定运行后被崩溃/误杀时，自动按原参数重启 —— 最多连续 3 次（间隔 5/15/30 秒），
   稳定运行 5 分钟后重新计数；用户手动启停、退出应用都会取消挂起的自动重启。每次重启与放弃都记录在日志里。
@@ -36,7 +37,7 @@
 - 写入失败（组策略、安全软件拦截）时开关会退回原状，并把原因写在状态行里，不会出现「设置开着而系统里其实没有」。
 
 ### 环境信息
-首页可展开的面板，展示运行状态（PID / 启动时刻）、应用版本、已安装版本、Node.js 与 npm 版本、`dsh` 可执行文件路径、WebView 引擎版本。
+首页可展开的面板，展示运行状态（PID / 启动时刻）、应用版本、已安装版本与安装来源（npm / pnpm）、Node.js 与 npm 版本、`dsh` 可执行文件路径、WebView 引擎版本。`dsh` 不在 PATH 时会在已知全局 bin 目录（`PNPM_HOME`、`%LOCALAPPDATA%\pnpm\bin`、`%APPDATA%\npm` 等）里兜底查找。
 
 ### Web 界面访问
 - **应用内打开**：内置 WebView 窗口（Windows 走 WebView2，macOS 走 WKWebView）。

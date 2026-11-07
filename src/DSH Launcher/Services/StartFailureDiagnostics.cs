@@ -277,7 +277,15 @@ namespace DSH_Launcher.Services
                 Directory.Exists(dir) ? $"{dir}(共 {CountEntries(dir)} 项)" : $"{dir} 不存在";
         }
 
-        /// <summary>由 npm shim 路径反推全局包目录(&lt;bin&gt;\node_modules\@deepseek-ai\dsh);仅 Windows 形态(dsh.cmd),失败返回 null。</summary>
+        /// <summary>
+        /// 由 shim 路径反推全局包目录(<c>...\node_modules\@deepseek-ai\dsh</c>);失败返回 null。
+        /// <para>
+        /// 两种布局:npm 把包放在 bin 旁边的 <c>node_modules</c>;<c>pnpm</c> 则放在
+        /// <c>&lt;PNPM_HOME&gt;\global\&lt;版本&gt;\node_modules</c>(Windows 的 shim 在 <c>PNPM_HOME\bin</c>,
+        /// 类 Unix 的 shim 直接放在 PNPM_HOME)。如果不看 pnpm 布局,
+        /// pnpm 安装的机器上启动失败快照会永远写"① 全局包:未定位到",最关键的一层证据就丢了。
+        /// </para>
+        /// </summary>
         private static string? TryGetGlobalDshDirFromShim(string shimPath)
         {
             try
@@ -293,13 +301,59 @@ namespace DSH_Launcher.Services
                     return null;
                 }
 
-                var candidate = Path.Combine(binDir, "node_modules", "@deepseek-ai", "dsh");
-                return Directory.Exists(candidate) ? candidate : null;
+                var npmStyle = Path.Combine(binDir, "node_modules", "@deepseek-ai", "dsh");
+                if (Directory.Exists(npmStyle))
+                {
+                    return npmStyle;
+                }
+
+                return TryGetPnpmGlobalDshDir(binDir);
             }
             catch (Exception)
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 在 pnpm 的 &lt;PNPM_HOME&gt;/global/&lt;版本&gt;/node_modules 下找 dsh。
+        /// 同时试 binDir 自身与它的上级(Windows 的 shim 在 PNPM_HOME\bin,类 Unix 在 PNPM_HOME)。
+        /// </summary>
+        private static string? TryGetPnpmGlobalDshDir(string binDir)
+        {
+            var roots = new List<string> { binDir };
+            var parent = Path.GetDirectoryName(binDir.TrimEnd(Path.DirectorySeparatorChar));
+            if (parent is not null)
+            {
+                roots.Add(parent);
+            }
+
+            foreach (var root in roots)
+            {
+                var globalRoot = Path.Combine(root, "global");
+                if (!Directory.Exists(globalRoot))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    foreach (var versionDir in Directory.EnumerateDirectories(globalRoot))
+                    {
+                        var candidate = Path.Combine(versionDir, "node_modules", "@deepseek-ai", "dsh");
+                        if (Directory.Exists(candidate))
+                        {
+                            return candidate;
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // 某个版本目录不可读只跳过它
+                }
+            }
+
+            return null;
         }
 
         /// <summary>目录内条目数(直接子项);目录不存在或不可枚举返回 -1。</summary>

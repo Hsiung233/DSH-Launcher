@@ -12,7 +12,11 @@ using System.Threading.Tasks;
 namespace DSH_Launcher.Services
 {
     /// <summary>
-    /// 管理 npm 全局包 @deepseek-ai/dsh 的检测、安装与运行(单例,跨页面保持状态)。
+    /// 管理全局包 @deepseek-ai/dsh 的检测、安装与运行(单例,跨页面保持状态)。
+    /// <para>
+    /// “全局装”**不限包管理器**:npm 与 pnpm 都支持。检测与启动只看命令能不能跑
+    /// (见 <see cref="DshCli"/>),安装/更新则跟随已检测到的来源(<see cref="InstalledBy"/>)。
+    /// </para>
     /// 所有事件可能在后台线程触发,UI 层需自行调度到 UI 线程。
     /// </summary>
     public sealed partial class DshService
@@ -118,6 +122,13 @@ namespace DSH_Launcher.Services
         public string RuntimePatchReload { get; private set; } = string.Empty;
 
         public string? InstalledVersion { get; private set; }
+
+        /// <summary>
+        /// 已安装 dsh 的安装来源(npm / pnpm / 未知)。安装与更新跟随它选择命令:
+        /// pnpm 装的包用 <c>npm install -g</c> 升级会在两个全局目录里各留一份,
+        /// PATH 上先命中的仍是旧 shim,表现为"更新了但还是旧版本"。
+        /// </summary>
+        internal DshInstaller InstalledBy { get; private set; } = DshInstaller.Unknown;
         public bool IsInstalling { get; private set; }
 
         /// <summary>面板上要显示的日志正文(超长时只保留尾部,并在开头带一行"已省略"提示)。</summary>
@@ -303,24 +314,99 @@ namespace DSH_Launcher.Services
             }
         }
 
-        /// <summary>查询 npm 全局安装的版本号;未安装时返回 null。</summary>
+        /// <summary>
+        /// 查询已安装的版本号;未安装时返回 null。
+        /// <para>
+        /// 检测顺序(与**谁装的**无关):
+        /// ① 定位 shim(<see cref="DshCli.FindAsync"/>:PATH + 已知全局 bin 目录),
+        ///    直接跑 <c>dsh --version</c> —— 命令能跑起来就说明包可用,这比问包管理器可靠;
+        /// ② 跑不起来/旧版本不认 <c>--version</c> 时,回退到全局清单
+        ///    (<c>npm ls -g</c> / <c>pnpm ls -g</c>,按 shim 来源决定先后)。
+        /// </para>
+        /// <para>
+        /// 为什么不能只问 npm:两个管理器的全局目录是两套,<c>npm ls -g</c> 在 pnpm 全局装的机器上
+        /// 看不到包(本机实测甚至直接 ENOENT),于是界面长期显示"未安装"。
+        /// </para>
+        /// </summary>
         public async Task<string?> GetInstalledVersionAsync()
         {
             try
             {
-                var result = await ChildProcessRunner.CaptureAsync($"npm ls -g {PackageName} --depth=0");
-                var match = Regex.Match(result.Stdout, Regex.Escape(PackageName) + @"@([^\s]+)");
-                this.InstalledVersion = match.Success ? match.Groups[1].Value : null;
+                var (version, installer) = await DetectInstallationAsync();
+                this.InstalledVersion = version;
+                this.InstalledBy = version is null ? DshInstaller.Unknown : installer;
+
+                if (version is not null)
+                {
+                    this.AppendSystemLog($"[环境] 已安装 dsh v{version}({this.InstalledBy.Describe()})");
+                }
             }
             catch (Exception ex)
             {
                 this.InstalledVersion = null;
+                this.InstalledBy = DshInstaller.Unknown;
                 this.AppendLog($"[检查安装状态失败] {ex.Message}\r\n");
             }
+
             return this.InstalledVersion;
         }
 
-        /// <summary>通过 npm 全局安装该包,输出写入日志。</summary>
+        /// <summary>
+        /// 探测"装了什么版本、由谁装的"。返回 (null, Unknown) 表示未安装。
+        /// 任何一步失败都只是让后续步骤接手,不抛异常。
+        /// </summary>
+        private static async Task<(string? Version, DshInstaller Installer)> DetectInstallationAsync()
+        {
+            var (shimPath, _) = await DshCli.FindAsync();
+            var installer = DshCli.DetectInstaller(shimPath);
+
+            var version = await DshCli.TryGetVersionAsync(shimPath);
+            if (version is not null)
+            {
+                return (version, installer);
+            }
+
+            // 回退:shim 定位不到或跑不起来(依赖残缺时仍可能装着),改问全局清单
+            foreach (var candidate in PreferredQueryOrder(installer))
+            {
+                version = await QueryGlobalListVersionAsync(candidate);
+                if (version is not null)
+                {
+                    return (version, candidate);
+                }
+            }
+
+            return (null, DshInstaller.Unknown);
+        }
+
+        /// <summary>按 shim 来源决定先问哪个管理器:来源已知时先问它,未知时按旧行为先问 npm。</summary>
+        private static IEnumerable<DshInstaller> PreferredQueryOrder(DshInstaller installer)
+            => installer == DshInstaller.Pnpm
+                ? new[] { DshInstaller.Pnpm, DshInstaller.Npm }
+                : new[] { DshInstaller.Npm, DshInstaller.Pnpm };
+
+        /// <summary>查某个包管理器的全局清单里有没有 dsh,有则返回版本号。</summary>
+        private static async Task<string?> QueryGlobalListVersionAsync(DshInstaller installer)
+        {
+            var command = installer == DshInstaller.Pnpm
+                ? $"pnpm ls -g {PackageName} --depth=0"
+                : $"npm ls -g {PackageName} --depth=0";
+
+            try
+            {
+                var result = await ChildProcessRunner.CaptureAsync(command);
+                return DshCli.ParseGlobalListVersion(result.Stdout, PackageName);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 全局安装该包,输出写入日志。命令按已检测到的安装来源选择:
+        /// pnpm 装的就用 <c>pnpm add -g</c>,否则(含"未安装"与来源未知)用 <c>npm install -g</c>。
+        /// </summary>
         public async Task InstallAsync()
         {
             if (this.IsInstalling)
@@ -332,8 +418,13 @@ namespace DSH_Launcher.Services
             StateChanged?.Invoke();
             try
             {
-                this.AppendLog($"> npm install -g {PackageName}\r\n");
-                await this.RunStreamingAsync($"npm install -g {PackageName}");
+                var installer = await this.ResolveInstallInstallerAsync();
+                var command = installer == DshInstaller.Pnpm
+                    ? $"pnpm add -g {PackageName}"
+                    : $"npm install -g {PackageName}";
+
+                this.AppendLog($"> {command}\r\n");
+                await this.RunStreamingAsync(command);
             }
             finally
             {
@@ -343,9 +434,48 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 查询 npm 上的最新版本号,用于判断是否需要显示“更新”按钮。
+        /// 决定这次安装/更新用哪个包管理器。
+        /// 只有在"已确认是 pnpm 装的"且 pnpm 确实可用时才走 pnpm;其余情况保持 npm(= 旧行为),
+        /// 并说明为什么改了口径 —— pnpm 被卸载/未在 PATH 上时静默换 npm 会让用户以为命令失效。
+        /// </summary>
+        private async Task<DshInstaller> ResolveInstallInstallerAsync()
+        {
+            if (this.InstalledBy != DshInstaller.Pnpm)
+            {
+                return DshInstaller.Npm;
+            }
+
+            if (await IsPnpmUsableAsync())
+            {
+                return DshInstaller.Pnpm;
+            }
+
+            this.AppendSystemLog("[安装] 当前 dsh 由 pnpm 全局安装,但找不到可用的 pnpm 命令,本次回退到 npm install -g");
+            return DshInstaller.Npm;
+        }
+
+        /// <summary>pnpm 是否可执行(安装/更新前的预检,避免 pnpm 缺失时只打印一句 cmd 的"不是内部或外部命令")。</summary>
+        private static async Task<bool> IsPnpmUsableAsync()
+        {
+            try
+            {
+                var result = await ChildProcessRunner.CaptureAsync("pnpm --version");
+                return result.ExitCode == 0 && DshCli.ParseVersionOutput(result.Stdout) is not null;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 查询 registry 上的最新版本号,用于判断是否需要显示"更新"按钮。
         /// 未安装时不查询(没有可更新的对象);查询失败(离线、npm 报错)时把 LatestVersion 置空,
-        /// 即“不确定就当作无更新”,避免误报。
+        /// 即"不确定就当作无更新",避免误报。
+        /// <para>
+        /// 用 <c>npm view</c> 只是因为它是最普及的 registry 客户端,与 dsh 装在哪个管理器无关;
+        /// npm 缺失/损坏时用 <c>pnpm view</c> 兜底(两者等价,只是查 registry)。
+        /// </para>
         /// </summary>
         public async Task CheckForUpdateAsync()
         {
@@ -357,13 +487,7 @@ namespace DSH_Launcher.Services
 
             try
             {
-                var result = await ChildProcessRunner.CaptureAsync($"npm view {PackageName} version");
-                // 输出形如 "1.2.3";多行时取最后一个非空行(npm 可能先打印告警)
-                var latest = result.Stdout
-                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(line => line.Trim())
-                    .LastOrDefault(line => line.Length > 0);
-                this.LatestVersion = string.IsNullOrWhiteSpace(latest) ? null : latest;
+                this.LatestVersion = await QueryRegistryLatestAsync();
             }
             catch (Exception ex)
             {
@@ -371,13 +495,36 @@ namespace DSH_Launcher.Services
                 this.AppendLog($"[检查更新失败] {ex.Message}\r\n");
             }
 
-            this.AppendSystemLog($"[版本检查] 已安装 v{this.InstalledVersion},npm 最新 v{this.LatestVersion ?? "(未知)"}"
+            this.AppendSystemLog($"[版本检查] 已安装 v{this.InstalledVersion},registry 最新 v{this.LatestVersion ?? "(未知)"}"
                 + $"{(this.IsUpdateAvailable ? ",有新版本可用" : ",已是最新")}");
             StateChanged?.Invoke();
         }
 
+        /// <summary>依次尝试 npm / pnpm 的 view;两者都拿不到版本号时返回 null。</summary>
+        private static async Task<string?> QueryRegistryLatestAsync()
+        {
+            foreach (var command in new[] { $"npm view {PackageName} version", $"pnpm view {PackageName} version" })
+            {
+                try
+                {
+                    var result = await ChildProcessRunner.CaptureAsync(command);
+                    var latest = DshCli.ParseVersionOutput(result.Stdout);
+                    if (latest is not null)
+                    {
+                        return latest;
+                    }
+                }
+                catch (Exception)
+                {
+                    // 换下一个客户端;两个都失败由调用方置空(= 当作无更新)
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>
-        /// 更新到最新版:重新执行 npm 全局安装(npm install -g 会升级到 latest),
+        /// 更新到最新版:按安装来源重新执行全局安装(<c>npm install -g</c> / <c>pnpm add -g</c> 都会升到 latest),
         /// 完成后刷新已安装版本与最新版本,使“更新”按钮自动消失。
         /// </summary>
         public async Task UpdateAsync()
@@ -500,7 +647,7 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 单次启动:where 定位 npm shim → 完整路径启动 → 探测窗口内退出即失败;
+        /// 单次启动:定位 shim(npm 或 pnpm 全局安装)→ 完整路径启动 → 探测窗口内退出即失败;
         /// 返回 false 表示启动失败(已填充 <see cref="LastStartError"/>)。
         /// </summary>
         private async Task<bool> StartOnceAsync()
@@ -516,7 +663,7 @@ namespace DSH_Launcher.Services
             this._lastStartLogMark = 0;
             this._lastRunArgs = BuildRunArgs();
             this.AppendLog($"> {DshCli.CommandName} {this._lastRunArgs}\r\n");
-            // 1) 先定位 npm 全局 bin 下的 shim,给出明确错误,避免“进程活着但命令没跑起来”的模糊状态
+            // 1) 先定位 shim(PATH 与已知全局 bin 目录),给出明确错误,避免“进程活着但命令没跑起来”的模糊状态
             string shimPath;
             try
             {
@@ -525,7 +672,7 @@ namespace DSH_Launcher.Services
                 if (shimPath.Length == 0)
                 {
                     this.LastStartError = $"命令: {DshCli.CommandName} {this._lastRunArgs}\r\n\r\n未找到“{DshCli.CommandName}”命令。"
-                        + "npm 全局 bin 目录可能不在 PATH 中,或包未正确安装。"
+                        + "npm / pnpm 的全局 bin 目录可能不在 PATH 中,或包未正确安装。"
                         + $"\r\n\r\n{PlatformProcess.LocateCommandLine(DshCli.CommandName)} 输出:\r\n{probeOutput}";
                     this.AppendLog("[启动失败] 未找到 dsh 命令\r\n");
                     return false;
@@ -552,6 +699,15 @@ namespace DSH_Launcher.Services
                     redirectOutput: true,
                     redirectInput: true,
                     rawByteOutput: true);
+
+                // pnpm 全局安装的 shim 不自带 NODE_PATH(见 DshCli.ResolveNodePathFor),
+                // 不补就会在 host preparation 阶段找不到原生插件而直接 fatal。
+                var nodePath = DshCli.ResolveNodePathFor(shimPath);
+                if (nodePath.Length > 0)
+                {
+                    psi.Environment["NODE_PATH"] = nodePath;
+                    this.AppendSystemLog($"[环境] pnpm 全局安装:已为 dsh 子进程补齐 NODE_PATH:{nodePath}");
+                }
 
                 process = new Process { StartInfo = psi, EnableRaisingEvents = true };
                 process.OutputDataReceived += (_, e) =>
@@ -934,21 +1090,30 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 检测 Node.js 环境是否可用:node 与 npm 两个命令都能跑出版本号才算可用。
+        /// 检测安装前所需的环境是否可用。
         /// <para>
-        /// 为什么要在 npm 安装前先探一次:没有 Node.js 时 <c>npm install -g</c> 只会输出
-        /// cmd 的「不是内部或外部命令」,用户看不懂;由界面弹窗引导去官网下载更直接。
-        /// npm 虽随 Node.js 附带,但存在「装了 node、npm 残缺」的环境,所以两个都探。
+        /// 必需项:Node.js(<c>node</c> 能跑出版本号)。
+        /// 包管理器按安装来源要求:pnpm 全局装的 dsh 只需 pnpm;否则(含未安装)需要 npm。
+        /// 为什么不一律只查 npm:更新 pnpm 装的包走 <c>pnpm add -g</c>,npm 根本用不上;
+        /// 反过来 npm 缺失时 <c>npm install -g</c> 只会输出 cmd 的「不是内部或外部命令」,由界面弹窗引导更直接。
         /// </para>
         /// </summary>
         public async Task<bool> HasNodeEnvironmentAsync()
         {
             var node = await TryCaptureFirstLineAsync("node --version");
-            var npm = node is null ? null : await TryCaptureFirstLineAsync("npm --version");
-            var ok = node is not null && npm is not null;
+            if (node is null)
+            {
+                this.AppendSystemLog("[环境] 安装前检测:未检测到可用的 Node.js(node 命令不可用)");
+                return false;
+            }
+
+            var manager = this.InstalledBy == DshInstaller.Pnpm ? "pnpm" : "npm";
+            var managerVersion = await TryCaptureFirstLineAsync($"{manager} --version");
+            var ok = managerVersion is not null;
+
             this.AppendSystemLog(ok
-                ? $"[环境] npm 安装前检测通过:Node.js {node} / npm {npm}"
-                : "[环境] npm 安装前检测:未检测到可用的 Node.js 环境(node/npm 命令不可用)");
+                ? $"[环境] 安装前检测通过:Node.js {node} / {manager} {managerVersion}"
+                : $"[环境] 安装前检测:未检测到可用的 {manager}(Node.js {node})");
             return ok;
         }
 
@@ -993,16 +1158,16 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 运行命令(如 <c>npm install -g</c>)并把 stdout/stderr 流式追加到日志,进程退出后返回。
+        /// 运行命令(如 <c>npm install -g</c> / <c>pnpm add -g</c>)并把 stdout/stderr 流式追加到日志,进程退出后返回。
         /// 收尾的"等待异步输出读完"由 <see cref="ChildProcessRunner.StreamAsync"/> 负责 ——
         /// 少了它,npm 末尾的输出会被截断。
         /// </summary>
         private async Task RunStreamingAsync(string command)
         {
-            // npm install 流程(npm 输出不含 Web 地址,故不做地址检测)
+            // 安装流程(输出不含 Web 地址,故不做地址检测)
             var exitCode = await ChildProcessRunner.StreamAsync(
                 command, line => this.AppendLog(line + "\r\n"));
-            this.AppendLog($"[npm 退出,代码 {exitCode}]\r\n");
+            this.AppendLog($"[安装命令退出,代码 {exitCode}]\r\n");
         }
 
         [GeneratedRegex(@"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d+(?:/[^\s""'<>]*)?", RegexOptions.IgnoreCase | RegexOptions.Compiled, "zh-CN")]
