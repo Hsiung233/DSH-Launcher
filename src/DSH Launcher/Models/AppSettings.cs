@@ -66,36 +66,12 @@ namespace DSH_Launcher.Models
     }
 
     /// <summary>
-    /// 插件目录来源。**不是 npm registry**:社区有两份并行的人工策展目录,启动器都支持:
-    /// <list type="bullet">
-    /// <item><c>awesome-dsh-plugin</c> —— 社区市场 dsh-market 的数据源
-    /// (https://awesome-dsh-plugin.com/plugins.json,顶层是对象 + <c>plugins</c> 数组)。</item>
-    /// <item><c>dsh-plugin.org</c> —— 插件中心 dsh-plugin-hub 的数据源
-    /// (https://api.dsh-plugin.org/plugins.zh.json,顶层是数组,字段是缩写)。
-    /// 两份目录的插件集合与字段都不同,结构由启动器自动识别。</item>
-    /// </list>
-    /// 只列**已知结构**的目录:两份结构的字段完全不同(完整单词 vs 缩写),
-    /// 让用户随便填个地址很可能解析成空列表或错字段,所以不提供“自定义地址”。
-    /// 将来要接新市场时,在这里加一个成员 + <c>PluginService.ResolveCatalogUrl</c> 里加一条映射即可
-    /// (若新市场结构不同,还要给 <c>PluginService.ParseCatalog</c> 加一个解析分支)。
-    /// 枚举按**名字**解析(见 <see cref="LenientEnumConverter{T}"/>),所以增删成员不会读错已有设置。
-    /// </summary>
-    public enum PluginCatalogSource
-    {
-        /// <summary>awesome-dsh-plugin.com(dsh-market 的数据源),默认。</summary>
-        Official = 0,
-
-        /// <summary>dsh-plugin.org(dsh-plugin-hub 的数据源)。</summary>
-        DshPluginOrg = 1,
-    }
-
-    /// <summary>
     /// npm 源(registry)。设置页下拉框的索引与枚举值一一对应。
     /// <list type="bullet">
     /// <item><see cref="Config"/> = **不注入任何环境变量**,沿用用户自己的 .npmrc / 环境变量
     /// (即“使用配置源”,默认)。</item>
     /// <item>其余成员 = 已知的公共镜像,启动器会把地址注入子进程的 <c>npm_config_registry</c>,
-    /// npm 与 pnpm 都认这个变量(等价于 <c>--registry</c>,对 <c>dsh plugin</c> 转发的 pnpm 也生效)。</item>
+    /// npm 与 pnpm 都认这个变量(等价于 <c>--registry</c>)。</item>
     /// </list>
     /// 地址映射见 <c>ChildEnvironment.ResolveRegistry</c>。
     /// 枚举按**名字**解析(见 <see cref="LenientEnumConverter{T}"/>),所以增删成员不会读错已有设置。
@@ -198,18 +174,14 @@ namespace DSH_Launcher.Models
         /// </summary>
         public int WebViewIdleTimeoutMinutes { get; set; }
 
-        /// <summary>插件目录来源,默认 awesome-dsh-plugin。</summary>
-        [JsonConverter(typeof(LenientEnumConverter<PluginCatalogSource>))]
-        public PluginCatalogSource PluginCatalog { get; set; } = PluginCatalogSource.Official;
-
         /// <summary>npm 源,默认“使用配置源”(不覆盖本机 .npmrc 里的 registry)。</summary>
         [JsonConverter(typeof(LenientEnumConverter<NpmRegistrySource>))]
         public NpmRegistrySource NpmRegistry { get; set; } = NpmRegistrySource.Config;
 
         /// <summary>
         /// 代理地址(如 <c>http://127.0.0.1:7890</c>),空 = 不使用代理。
-        /// 会注入 npm/pnpm 等子进程的 HTTP_PROXY/HTTPS_PROXY 与 npm_config_proxy,
-        /// 也用于插件目录下载的 HTTP 客户端。改写前先经 <c>ChildEnvironment.NormalizeProxyUrl</c> 归一化。
+        /// 会注入 npm/pnpm 等子进程的 HTTP_PROXY/HTTPS_PROXY 与 npm_config_proxy。
+        /// 改写前先经 <c>ChildEnvironment.NormalizeProxyUrl</c> 归一化。
         /// </summary>
         public string ProxyUrl { get; set; } = string.Empty;
 

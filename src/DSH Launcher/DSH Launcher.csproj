@@ -24,7 +24,7 @@
   </ItemGroup>
 
   <!-- 测试项目要能直接测那些表达"格式知识"的 internal 类型
-       (PluginPatchFile / PluginCatalogReader / LenientEnumConverter 等)。
+       (LenientEnumConverter / AutoStartEntry 等)。
        它们是实现细节,不因为可测就提升为 public —— 只对测试程序集开放。 -->
   <ItemGroup>
     <InternalsVisibleTo Include="DSH Launcher.Tests" />

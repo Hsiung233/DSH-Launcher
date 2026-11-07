@@ -17,7 +17,7 @@ namespace DSH_Launcher.Views
         /// ⚠ 必须有它:Avalonia 的 `ComboBox` 在**构造时就会自动选中第 0 项**,
         /// 那个 `SelectionChanged` 发生在 `InitializeComponent` 期间、早于 `AttachedToVisualTree`,
         /// 此时 `_initializing` 还没置位,会被当成用户操作写回设置
-        /// (插件页就这样把用户选的来源静默改回过第 0 项)。
+        /// (本项目的下拉框曾经就这样把用户选的来源静默改回过第 0 项)。
         /// </summary>
         private bool _pageReady;
 

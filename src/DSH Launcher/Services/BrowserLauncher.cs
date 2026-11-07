@@ -11,7 +11,7 @@ namespace DSH_Launcher.Services
     /// 用系统默认浏览器打开地址。
     /// <para>
     /// 为什么从 <see cref="WebOpener"/> 里拆出来:它跟 WebView 窗口毫无关系 ——
-    /// 插件页打开目录条目页、WebView 里 target="_blank" 的兜底、首页的"浏览器打开"用的都是它,
+    /// WebView 里 target="_blank" 的兜底、首页的"浏览器打开"用的都是它,
     /// 而 WebView 会话(窗口复用/空闲释放)是另一件事。放在一起会让"打开浏览器"也要经过一整篇窗口管理的代码。
     /// </para>
     /// </summary>

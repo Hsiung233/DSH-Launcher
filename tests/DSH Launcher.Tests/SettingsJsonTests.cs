@@ -17,11 +17,10 @@ public sealed class SettingsJsonTests
     public void Deserialize_KnownEnumNames_AreMapped()
     {
         var settings = JsonSerializer.Deserialize<AppSettings>(
-            """{ "TraySingleClick": "Browser", "PluginCatalog": "DshPluginOrg", "NpmRegistry": "Npmmirror" }""");
+            """{ "TraySingleClick": "Browser", "NpmRegistry": "Npmmirror" }""");
 
         Assert.IsNotNull(settings);
         Assert.AreEqual(WebOpenAction.Browser, settings.TraySingleClick);
-        Assert.AreEqual(PluginCatalogSource.DshPluginOrg, settings.PluginCatalog);
         Assert.AreEqual(NpmRegistrySource.Npmmirror, settings.NpmRegistry);
     }
 
@@ -70,7 +69,6 @@ public sealed class SettingsJsonTests
         Assert.IsFalse(settings.AutoStartOnLogon);   // 开机自启动默认关闭
         Assert.AreEqual(0, settings.ListenPort);
         Assert.IsTrue(settings.KeepWebViewAlive);
-        Assert.AreEqual(PluginCatalogSource.Official, settings.PluginCatalog);
         Assert.AreEqual(NpmRegistrySource.Config, settings.NpmRegistry);
     }
 
@@ -98,7 +96,6 @@ public sealed class SettingsJsonTests
             WebViewLink = WebViewLinkTarget.AppWebView,
             KeepWebViewAlive = false,
             WebViewIdleTimeoutMinutes = 30,
-            PluginCatalog = PluginCatalogSource.DshPluginOrg,
             NpmRegistry = NpmRegistrySource.TencentCloud,
             ProxyUrl = "http://127.0.0.1:7890",
             NoProxy = "localhost,.corp.com",
@@ -118,7 +115,6 @@ public sealed class SettingsJsonTests
         Assert.AreEqual(original.WebViewLink, restored.WebViewLink);
         Assert.AreEqual(original.KeepWebViewAlive, restored.KeepWebViewAlive);
         Assert.AreEqual(original.WebViewIdleTimeoutMinutes, restored.WebViewIdleTimeoutMinutes);
-        Assert.AreEqual(original.PluginCatalog, restored.PluginCatalog);
         Assert.AreEqual(original.NpmRegistry, restored.NpmRegistry);
         Assert.AreEqual(original.ProxyUrl, restored.ProxyUrl);
         Assert.AreEqual(original.NoProxy, restored.NoProxy);

@@ -4,8 +4,8 @@
              x:Class="DSH_Launcher.App"
              RequestedThemeVariant="Default">
 
-    <!-- 跨页面共用的资源。三个页面原先各写一份(日志区底色在两页重复、卡片外观在首页/插件页
-         内联了 8 次),这里收成唯一定义 —— 改一处即可全局生效。 -->
+    <!-- 跨页面共用的资源。两个页面原先各写一份(日志区底色、卡片外观),这里收成唯一定义 ——
+         改一处即可全局生效。 -->
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.ThemeDictionaries>
@@ -25,12 +25,11 @@
     <Application.Styles>
         <sty:FluentAvaloniaTheme/>
 
-        <!-- 卡片外观:内容区一层的圆角描边容器(首页的环境/日志卡、插件页各列卡、设置页各组卡)。
+        <!-- 卡片外观:内容区一层的圆角描边容器(首页的环境/日志卡、设置页各组卡)。
              Expander 单列一条(首页的「环境与详情」就是一张可折叠卡片)——
              合写成 "Border.card, Expander.card" 时 Avalonia 会把样式目标类型推断为两者的公共基类
              Control,从而解析不到 Background/BorderBrush 这些属性,编译期就报 AVLN2000。
-             Padding 默认 16,个别卡片(插件页左栏、批量栏)用控件上的局部值覆盖 ——
-             局部值优先级高于样式 setter,所以不必为它们各写一套样式。 -->
+             局部值优先级高于样式 setter,所以个别卡片可用控件上的 Padding 覆盖。 -->
         <Style Selector="Border.card">
             <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>

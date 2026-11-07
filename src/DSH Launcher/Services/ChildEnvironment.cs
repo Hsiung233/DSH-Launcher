@@ -2,30 +2,25 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Security.Principal;
-using System.Text.RegularExpressions;
 using DSH_Launcher.Models;
 
 namespace DSH_Launcher.Services
 {
     /// <summary>
     /// “环境设置”(npm 源 / 代理)的唯一落地点:把用户在设置页选的值翻译成
-    /// **子进程环境变量**与 **HTTP 客户端代理**,其它地方不要各自拼一套。
+    /// **子进程环境变量**,其它地方不要各自拼一套。
     ///
     /// 作用范围(有意为之):
     /// <list type="bullet">
-    /// <item>走 <see cref="ChildProcessRunner"/> 的全部子进程 —— npm 的
-    /// <c>ls/view/install</c>、<c>where dsh</c> 探测、<c>dsh plugin ...</c>(pnpm 安装/卸载)。</item>
-    /// <item><see cref="PluginService"/> 拉取插件目录用的 HTTP 客户端。</item>
+    /// <item>走 <see cref="ChildProcessRunner"/> 的全部子进程 —— npm/pnpm 的
+    /// <c>ls/view/install</c>、<c>where dsh</c> 探测。</item>
     /// <item>**不包括** <c>dsh web</c> 服务进程:它是本机服务,注入代理反而会让
     /// WebView/浏览器访问 <c>127.0.0.1</c> 走代理而变慢或失败。</item>
     /// </list>
     ///
-    /// 为什么用环境变量而不是命令行参数:<c>npm</c> 有 <c>--registry</c>,但
-    /// <c>dsh plugin</c> 只是把参数转发给 profile 目录下的 <c>pnpm</c>,拼参数容易漏;
-    /// 而 <c>npm_config_*</c> 是 npm/pnpm 共同认的配置通道(等价于 .npmrc 里的同名键)。
+    /// 为什么用环境变量而不是命令行参数:<c>npm</c> 有 <c>--registry</c>,但 pnpm 的调用链
+    /// 不止一条,拼参数容易漏;而 <c>npm_config_*</c> 是 npm/pnpm 共同认的配置通道(等价于 .npmrc 里的同名键)。
     /// </summary>
     public static class ChildEnvironment
     {
@@ -132,16 +127,6 @@ namespace DSH_Launcher.Services
                 .Select(part => part.Trim())
                 .Where(part => part.Length > 0));
 
-        /// <summary>
-        /// 代理配置的指纹(用于判断已建好的 <see cref="HttpClient"/> 是否需要重建)。
-        /// 代理改了免重启即可生效:拉目录前比对一次,不同就换掉旧客户端。
-        /// </summary>
-        public static string ProxyKey()
-        {
-            var settings = SettingsService.Instance.Settings;
-            return NormalizeProxyUrl(settings.ProxyUrl) + "\n" + NormalizeNoProxy(settings.NoProxy);
-        }
-
         /// <summary>把当前环境设置注入子进程(registry + 代理)。</summary>
         public static void Apply(ProcessStartInfo psi)
         {
@@ -235,43 +220,6 @@ namespace DSH_Launcher.Services
             return $"环境:{(IsElevated() ? "管理员权限" : "普通权限")};"
                 + $"{CompatibilityLayerVariable}{layerText};{efc} 个 EFC_* 变量"
                 + (string.IsNullOrEmpty(layer) ? string.Empty : "(链级兼容层:启动时会逃逸出上游进程链重开自己)");
-        }
-
-        /// <summary>
-        /// 给应用自己发起的 HTTP 请求套上代理(插件目录下载)。
-        /// 子进程的环境变量对进程内的 <see cref="HttpClient"/> 无效,必须显式设 handler。
-        /// </summary>
-        public static void ApplyProxy(HttpClientHandler handler)
-        {
-            var proxy = NormalizeProxyUrl(SettingsService.Instance.Settings.ProxyUrl);
-            if (proxy.Length == 0)
-            {
-                return;
-            }
-
-            var webProxy = new WebProxy(proxy)
-            {
-                // 本机地址不经代理:目录里没有本机地址,但显式声明语义更清楚
-                BypassProxyOnLocal = true,
-            };
-
-            // 条目既支持精确主机名也支持域名后缀(localhost / .corp.com),统一按“后缀匹配”处理:
-            // .NET 的 BypassList 是正则表,主机名要转义,只匹配整个主机(含子域)以免误伤同前缀域名。
-            // 先收集再一次性赋值:逐条读回 BypassList 再加一条是 O(n²) 的数组复制,也容易被误读成“覆盖”。
-            var bypass = new List<string>();
-            foreach (var entry in NormalizeNoProxy(SettingsService.Instance.Settings.NoProxy)
-                .Split(',', StringSplitOptions.RemoveEmptyEntries))
-            {
-                bypass.Add($@"(^|\.){Regex.Escape(entry.TrimStart('*', '.'))}$");
-            }
-
-            if (bypass.Count > 0)
-            {
-                webProxy.BypassList = [.. bypass];
-            }
-
-            handler.Proxy = webProxy;
-            handler.UseProxy = true;
         }
     }
 }

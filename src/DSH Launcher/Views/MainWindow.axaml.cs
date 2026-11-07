@@ -14,7 +14,6 @@ namespace DSH_Launcher.Views
     public partial class MainWindow : Window
     {
         private readonly HomePageControl _homePage;
-        private readonly PluginsPageControl _pluginsPage;
         private readonly SettingsPageControl _settingsPage;
         private readonly WindowStateTracker _windowStateTracker;
 
@@ -37,7 +36,6 @@ namespace DSH_Launcher.Views
             this._windowStateTracker = WindowStateService.Instance.TrackMainWindow(this, restoredBounds);
 
             this._homePage = new HomePageControl();
-            this._pluginsPage = new PluginsPageControl();
             this._settingsPage = new SettingsPageControl();
 
             this.NavView.Content = this._homePage;
@@ -56,9 +54,6 @@ namespace DSH_Launcher.Views
             {
                 switch (item.Tag?.ToString())
                 {
-                    case "plugins":
-                        this.NavView.Content = this._pluginsPage;
-                        break;
                     case "settings":
                         this.NavView.Content = this._settingsPage;
                         break;

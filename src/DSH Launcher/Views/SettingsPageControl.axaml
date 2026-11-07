@@ -29,7 +29,7 @@
             <Setter Property="Margin" Value="0 12"/>
             <Setter Property="Background" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
         </Style>
-        <!-- 卡片外观(Border.card)统一定义在 App.axaml,与首页/插件页共用同一份 -->
+        <!-- 卡片外观(Border.card)统一定义在 App.axaml,与首页共用同一份 -->
         <Style Selector="StackPanel.sectionHeader">
             <Setter Property="Orientation" Value="Horizontal"/>
             <Setter Property="Spacing" Value="8"/>
@@ -192,12 +192,12 @@
                     </StackPanel>
                     <TextBlock Classes="rowDesc"
                                Margin="24 4 0 12"
-                               Text="npm 源与网络代理:作用于启动器发起的 npm/pnpm 命令与插件目录下载,不修改用户自己的 .npmrc"/>
+                               Text="npm 源与网络代理:作用于启动器发起的 npm/pnpm 命令,不修改用户自己的 .npmrc"/>
 
                     <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
                             <TextBlock Classes="rowTitle" Text="npm 源"/>
-                            <TextBlock Classes="rowDesc" Text="“使用配置源”= 沿用本机 .npmrc 与环境变量;其余选项会把地址注入子进程,对 dsh 的安装/更新与插件安装同时生效"/>
+                            <TextBlock Classes="rowDesc" Text="“使用配置源”= 沿用本机 .npmrc 与环境变量;其余选项会把地址注入子进程,对 dsh 的安装/更新生效"/>
                             <TextBlock x:Name="NpmRegistryUrlText"
                                        Classes="rowDesc"
                                        Margin="0 2 0 0"

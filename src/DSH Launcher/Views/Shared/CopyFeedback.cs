@@ -9,7 +9,7 @@ namespace DSH_Launcher.Views.Shared
     /// <summary>
     /// "复制到剪贴板 + 按钮文字短暂变成「已复制」"这一组反馈。
     /// <para>
-    /// 首页与插件页原先各写了一份(两对方法加一个忙碌标志),这里收拢成一处:
+    /// 首页原先写了一份(两个方法加一个忙碌标志),这里收拢成一处:
     /// 剪贴板 API 的正确写法(Avalonia 12 用 <c>DataTransfer</c>+<c>SetDataAsync</c>)只需要维护一遍。
     /// </para>
     /// <para>

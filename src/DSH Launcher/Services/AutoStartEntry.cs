@@ -8,7 +8,7 @@ namespace DSH_Launcher.Services
     /// <para>
     /// 为什么单独成文件:这里是**格式知识**(注册表值名、LaunchAgent 的 plist、XDG 的 .desktop 文本),
     /// 与“什么时候该写、写失败怎么办”是两件事。把它做成纯字符串拼装,单元测试就能直接盯住格式
-    /// (与 <c>PluginPatchFile</c> / <c>PluginCatalogReader</c> 同一路数);而 <see cref="AutoStartService"/>
+    /// (与 <c>LenientEnumConverter</c> 同一路数);而 <see cref="AutoStartService"/>
     /// 只管读写与失败处理。
     /// </para>
     /// <para>

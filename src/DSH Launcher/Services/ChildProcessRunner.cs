@@ -13,7 +13,7 @@ namespace DSH_Launcher.Services
     /// </para>
     /// <para>
     /// 统一注入"环境设置"(npm 源 / 代理,见 <see cref="ChildEnvironment"/>):
-    /// 本类服务的都是**非 <c>dsh web</c>** 的子进程(npm 安装/查询、命令探测、<c>dsh plugin</c>)。
+    /// 本类服务的都是**非 <c>dsh web</c>** 的子进程(npm/pnpm 安装/查询、命令探测)。
     /// <c>dsh web</c> 服务进程**不**走本类 —— 它是本机服务,注入代理会让 WebView/浏览器访问
     /// <c>127.0.0.1</c> 绕一圈,那条路径在 <see cref="DshService"/> 里单独拼启动参数。
     /// </para>
@@ -55,7 +55,7 @@ namespace DSH_Launcher.Services
         }
 
         /// <summary>
-        /// 执行一条命令行并把输出**逐行**回调(用于需要实时反馈的操作,如安装/卸载插件);
+        /// 执行一条命令行并把输出**逐行**回调(用于需要实时反馈的长时间操作);
         /// 返回退出码。回调可能在线程池线程上触发。
         /// </summary>
         public static async Task<int> StreamAsync(string command, Action<string> onLine, string nodePath = "")

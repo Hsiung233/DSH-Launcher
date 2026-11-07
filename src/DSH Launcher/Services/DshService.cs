@@ -28,11 +28,6 @@ namespace DSH_Launcher.Services
         /// <summary>固定的子命令部分;监听地址与端口由 <see cref="BuildRunArgs"/> 按设置追加。</summary>
         private const string BaseRunArgs = "web --no-open";
 
-        /// <summary>首个默认启用插件级热重载(web profile 默认开启 dsh-hmr 文件监听)的 dsh 版本。</summary>
-        /// <remarks>取 0.1.6 系列的首个发布(0.1.6-alpha.1);npm 上没有 0.1.6 之前的 0.1.5 正式版。
-        /// </remarks>
-        internal const string LiveReloadSinceVersion = "0.1.6-alpha.1";
-
         private Process? _process;
 
         /// <summary>
@@ -106,20 +101,6 @@ namespace DSH_Launcher.Services
         private static readonly Regex WebUrlRegex = GetWebUrlRegex();
 
         public bool IsRunning => IsAlive(this._process);
-
-        /// <summary>
-        /// 本次运行的启停生效方式基线(<see cref="CaptureRuntimePatchReload"/>):"live" = 运行中的 dsh 对
-        /// cordis.patch.yml / package.json 的外部改动做热重载(dsh-hmr 监听文件并 reconcile,启停免重启);
-        /// "startup" = 需重启生效。空串 = 本次运行不是由启动器拉起的(基线未知,消费方按 dsh 缺省 live 处理)。
-        /// </summary>
-        /// <remarks>
-        /// 热重载能力来自 base bundle 的 <c>@deepseek-ai/dsh-hmr</c>:它用 chokidar 监听
-        /// <c>cordis.patch.yml</c>、顶层 patch 文件与 <c>package.json</c>,变更即调
-        /// <c>reconcileProfilePatches</c> 进程内启停插件 fiber(2026-09-28 对 0.1.7-rc.2 端到端实测,
-        /// 外部写覆盖免重启双向生效)。该能力在 0.1.6-alpha.1 起的 web profile 默认开启
-        /// (headless/SDK/ACP profile 在 YAML 里禁用 hmr);此前的版本没有插件级热重载,按 startup 处理。
-        /// </remarks>
-        public string RuntimePatchReload { get; private set; } = string.Empty;
 
         public string? InstalledVersion { get; private set; }
 
@@ -771,8 +752,7 @@ namespace DSH_Launcher.Services
             var exitedInWindow = await Task.Run(() => process.WaitForExit((int)StartProbeWindow.TotalMilliseconds));
             if (!exitedInWindow)
             {
-                // 视为启动成功:此刻起磁盘上"这份配置"就是运行实例的行为了,立即取基线
-                this.CaptureRuntimePatchReload();
+                // 视为启动成功
                 return true;
             }
 
@@ -851,28 +831,6 @@ namespace DSH_Launcher.Services
             this.AutoRestartGaveUp?.Invoke(WatchdogPolicy.MaxRestarts);
         }
 
-        /// <summary>
-        /// 确定本次运行的启停生效方式基线(<see cref="RuntimePatchReload"/>),按已安装的 dsh 版本:
-        /// 0.1.6-alpha.1 起的 web profile 默认启用 dsh-hmr 文件监听(外部改 cordis.patch.yml 免重启热生效),
-        /// 更早的版本没有该能力,按 startup 处理。版本未知(尚未探测到,或用户手动在应用外启动)按 live 处理。
-        /// </summary>
-        private void CaptureRuntimePatchReload()
-        {
-            if (this.InstalledVersion is null
-                || CompareVersions(this.InstalledVersion, LiveReloadSinceVersion) >= 0)
-            {
-                this.RuntimePatchReload = "live";
-            }
-            else
-            {
-                this.RuntimePatchReload = "startup";
-            }
-
-            AppLogService.Write($"[启动] 已安装 dsh v{this.InstalledVersion ?? "(未知)"},"
-                + $"启停基线 = {this.RuntimePatchReload}"
-                + (this.RuntimePatchReload == "live" ? "(启停覆盖热生效)" : "(启停覆盖需重启生效)"));
-        }
-
         /// <summary>进程退出回调:观察期内的意外退出视为启动失败,通知 UI 弹窗。</summary>
         private void OnProcessExited(Process process)
         {
@@ -882,8 +840,6 @@ namespace DSH_Launcher.Services
                 && DateTime.UtcNow - this._startTimeUtc < LateExitFailureWindow;
 
             this.WebUrl = null;
-            // 进程没了,运行基线随之失效(消费方以 IsRunning 为门,这里是保持状态自洽)
-            this.RuntimePatchReload = string.Empty;
             StateChanged?.Invoke();
 
             // 稳定运行后的意外退出(崩溃/被误杀):failedEarly 只覆盖观察期内,
@@ -1080,9 +1036,6 @@ namespace DSH_Launcher.Services
                     this.CloseJobHandle();
                 }
             }
-
-            // 服务已停,运行基线随之失效(下次 StartAsync 会重新捕获)
-            this.RuntimePatchReload = string.Empty;
 
             // 服务已停,WebView 里只剩一个连不上的死页面:真正关闭窗口并释放 WebView2 进程(约 470MB)。
             // 这里不采用“隐藏”——服务都停了,保留窗口只会白占内存。

@@ -1,9 +1,9 @@
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('首页', '插件', '设置')][string]$Page,
+    [Parameter(Mandatory = $true)][ValidateSet('首页', '设置')][string]$Page,
     [int]$TimeoutSeconds = 20
 )
 
-# 让 DSH Launcher 主窗口自主切换到指定页(首页/插件/设置),供自动化界面验证使用。
+# 让 DSH Launcher 主窗口自主切换到指定页(首页/设置),供自动化界面验证使用。
 #
 # 踩过的坑(务必保留这些做法,详见 ../SKILL.md):
 # 1) **必须先激活窗口**:FANavigationView 的导航项只有在窗口处于前台时,
@@ -118,10 +118,6 @@ function Get-CurrentPage($win) {
     $c1 = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'SettingsScroll')
     if ($win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $c1)) { return '设置' }
-    # 插件页用 PluginsSubText(页头常驻文本;Grid/ItemsControl 这类 Panel 没有 UIA 对等体,查不到)
-    $cPlugins = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'PluginsSubText')
-    if ($win.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cPlugins)) { return '插件' }
     # 首页用 StatusText(常驻文本)。不要用 PortBox —— 它在 RunActionsPanel 里,
     # 只有“已安装且未运行”时才存在,服务运行中查不到。
     # (原先用 DshExpander;2026-09 首页去掉 Expander 后改为 StatusText)

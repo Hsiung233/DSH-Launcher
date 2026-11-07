@@ -10,10 +10,9 @@ namespace DSH_Launcher.Services
     /// <summary>
     /// dsh 命令行入口:定位全局装出来的命令,并执行 dsh 子命令。
     /// <para>
-    /// 为什么单独成类:定位与执行既不属于"服务生命周期"(<see cref="DshService"/> 的启停/版本管理),
-    /// 也不属于插件管理 —— 它是两端共用的基础设施。抽出来之后依赖方向变成
-    /// <c>DshService → DshCli</c>、<c>PluginService → DshCli</c>,
-    /// 插件页不再需要为了跑一条 <c>dsh plugin</c> 而依赖整个 DshService。
+    /// 为什么单独成类:定位与执行不属于"服务生命周期"(<see cref="DshService"/> 的启停/版本管理),
+    /// 而是可独立测试的基础设施。抽出来之后依赖方向纯化为 <c>DshService → DshCli</c>,
+    /// 服务层的启停、版本查询与诊断都共用同一套定位/执行逻辑。
     /// </para>
     /// <para>
     /// “全局装出来”**不限定包管理器**:npm 与 pnpm 都会在各自的全局 bin 目录生成 shim
@@ -24,7 +23,7 @@ namespace DSH_Launcher.Services
     /// <para>
     /// pnpm 全局安装的 Windows shim(<c>PNPM_HOME\bin\dsh.cmd</c>)不自带 <c>NODE_PATH</c>,
     /// 而全局虚拟库布局下没有它 dsh 就加载不到原生插件 —— <see cref="ResolveNodePathFor"/>
-    /// 负责把这个缺口补在子进程环境里(dsh 启动与 <c>dsh plugin</c> 子命令都走这条)。
+    /// 负责把这个缺口补在子进程环境里(dsh 启动走这条)。
     /// </para>
     /// <para>
     /// 输出一律经 <see cref="ChildProcessRunner"/>(按原样字节收下再逐行判定编码、
@@ -53,23 +52,6 @@ namespace DSH_Launcher.Services
                 PlatformProcess.ShellCommandForExecutable(shimPath, arguments),
                 ResolveNodePathFor(shimPath));
             return (result.ExitCode, result.Stdout, result.Stderr);
-        }
-
-        /// <summary>
-        /// 执行一条 dsh 子命令,输出按行流式回传(用于需要实时反馈的操作,如安装/卸载插件)。
-        /// 返回码 -1 表示未能定位 dsh 命令。
-        /// </summary>
-        public static async Task<int> RunStreamingAsync(string arguments, Action<string> onOutput)
-        {
-            var (shimPath, locateError) = await TryLocateAsync();
-            if (shimPath.Length == 0)
-            {
-                onOutput(locateError);
-                return -1;
-            }
-
-            return await ChildProcessRunner.StreamAsync(
-                PlatformProcess.ShellCommandForExecutable(shimPath, arguments), onOutput);
         }
 
         /// <summary>定位 dsh 命令;失败时返回空串与可直接展示的错误说明。</summary>

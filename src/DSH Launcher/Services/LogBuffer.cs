@@ -25,7 +25,7 @@ namespace DSH_Launcher.Services
     public sealed class LogBuffer
     {
         /// <summary>
-        /// 默认字符数上限。两个日志面板(首页 / 插件页)历史上各写了一份同值的常量,
+        /// 默认字符数上限。首页日志面板与启动器服务日志共用这一常量,
         /// 现在唯一定义在此 —— 这个值只由"界面能被多长的文本拖慢"决定,与哪个服务无关。
         /// </summary>
         public const int DefaultMaxChars = 50_000;
