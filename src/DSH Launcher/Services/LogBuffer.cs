@@ -10,7 +10,7 @@ namespace DSH_Launcher.Services
     ///
     /// <para>
     /// 为什么必须限长:两个日志面板都是"把整段日志塞进一个 <c>SelectableTextBlock</c> + <c>TextWrapping=Wrap</c>"
-    /// 的实现,文本一改就要整段重新塑形/排版(不是按行增量)。而 dsh / npm / pnpm 出错时会刷屏 ——
+    /// 的实现,文本一改就要整段重新塑形/排版(不是按行增量)。而 dsh / npm 出错时会刷屏 ——
     /// 实测一次 <c>dsh web</c> 启动失败吐出了 **43 万字符**(Node 把整个 AggregateError 树完整打印),
     /// 面板逐行追加的结果是 UI 线程长时间钉死在 Avalonia 文本排版里,窗口直接"未响应"。
     /// 所以长度必须在**源头**钉住(顺带也把内存占用钉住);界面侧另有刷新节流配合。

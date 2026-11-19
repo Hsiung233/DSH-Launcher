@@ -13,14 +13,14 @@ namespace DSH_Launcher.Services
     ///
     /// 作用范围(有意为之):
     /// <list type="bullet">
-    /// <item>走 <see cref="ChildProcessRunner"/> 的全部子进程 —— npm/pnpm 的
+    /// <item>走 <see cref="ChildProcessRunner"/> 的全部子进程 —— npm 的
     /// <c>ls/view/install</c>、<c>where dsh</c> 探测。</item>
     /// <item>**不包括** <c>dsh web</c> 服务进程:它是本机服务,注入代理反而会让
     /// WebView/浏览器访问 <c>127.0.0.1</c> 走代理而变慢或失败。</item>
     /// </list>
     ///
-    /// 为什么用环境变量而不是命令行参数:<c>npm</c> 有 <c>--registry</c>,但 pnpm 的调用链
-    /// 不止一条,拼参数容易漏;而 <c>npm_config_*</c> 是 npm/pnpm 共同认的配置通道(等价于 .npmrc 里的同名键)。
+    /// 为什么用环境变量而不是命令行参数:<c>npm</c> 有 <c>--registry</c>,但启动器要发起的 npm
+    /// 调用链不止一条,拼参数容易漏;而 <c>npm_config_*</c> 是 npm 认的配置通道(等价于 .npmrc 里的同名键)。
     /// </summary>
     public static class ChildEnvironment
     {
@@ -39,10 +39,10 @@ namespace DSH_Launcher.Services
         /// <summary>代理相关的环境变量名。</summary>
         /// <remarks>
         /// 两组都要设:
-        /// ① <c>HTTP_PROXY/HTTPS_PROXY</c>(含小写形式)—— 通用约定,pnpm/undici/curl 等都认;
+        /// ① <c>HTTP_PROXY/HTTPS_PROXY</c>(含小写形式)—— 通用约定,undici/curl 等都认;
         /// ② <c>npm_config_proxy/npm_config_https_proxy</c> —— **npm 自身不读 HTTP_PROXY**,
         /// 它只认 proxy/https-proxy 配置项(可由 <c>npm_config_*</c> 环境变量提供)。
-        /// 只设一组会出现“pnpm 走了代理、npm 没走”这种半生效状态。
+        /// 只设一组会出现“npm 的 registry 查询走了代理、下载没走”这种半生效状态。
         /// </remarks>
         private static readonly string[] ProxyVariableNames =
         [

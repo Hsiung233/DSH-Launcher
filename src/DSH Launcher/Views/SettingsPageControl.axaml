@@ -192,7 +192,7 @@
                     </StackPanel>
                     <TextBlock Classes="rowDesc"
                                Margin="24 4 0 12"
-                               Text="npm 源与网络代理:作用于启动器发起的 npm/pnpm 命令,不修改用户自己的 .npmrc"/>
+                               Text="npm 源与网络代理:作用于启动器发起的 npm 命令,不修改用户自己的 .npmrc"/>
 
                     <Grid Classes="settingRow" ColumnDefinitions="*,Auto">
                         <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">

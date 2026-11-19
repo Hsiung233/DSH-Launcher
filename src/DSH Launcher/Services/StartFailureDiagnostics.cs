@@ -167,7 +167,7 @@ namespace DSH_Launcher.Services
         /// 为什么要快照(2026-09-18 排查结论):dsh 插件树的导入解析发生在加载器自身位置
         /// (全局包 <c>node_modules\@deepseek-ai\*</c> 内部),而失败消息里的
         /// "imported from …\profiles\web\" 只是错误拼装的显示基,不是真实解析路径;
-        /// 共享农场(<c>profiles\node_modules</c>,dsh 自建 junction)与 profile 的 pnpm 层
+        /// 共享农场(<c>profiles\node_modules</c>,dsh 自建 junction)与 profile 自管的 node_modules 层
         /// 都会在每次启动时被 dsh 自愈。因此失败时点四层里必有一层处于残缺,当场留证是唯一定位手段。
         /// 各层独立 try/catch:一层失败不影响其余层留证。任何异常只记录、不抛出。
         /// </para>
@@ -249,7 +249,7 @@ namespace DSH_Launcher.Services
                     }
                 }
 
-                // ③ profile 自身 node_modules(pnpm 层)+ ④ .dsh-module-fallback(dsh 私有兜底)
+                // ③ profile 自身 node_modules(dsh 为 profile 安装的插件层)+ ④ .dsh-module-fallback(dsh 私有兜底)
                 var webNm = Path.Combine(profileDir, "node_modules");
                 lines.Add($"③ profile node_modules:{webNm}(共 {CountEntries(webNm)} 项)");
                 var webDangling = Directory.Exists(webNm) ? FindDanglingLinks(webNm) : new List<string>();
@@ -280,10 +280,7 @@ namespace DSH_Launcher.Services
         /// <summary>
         /// 由 shim 路径反推全局包目录(<c>...\node_modules\@deepseek-ai\dsh</c>);失败返回 null。
         /// <para>
-        /// 两种布局:npm 把包放在 bin 旁边的 <c>node_modules</c>;<c>pnpm</c> 则放在
-        /// <c>&lt;PNPM_HOME&gt;\global\&lt;版本&gt;\node_modules</c>(Windows 的 shim 在 <c>PNPM_HOME\bin</c>,
-        /// 类 Unix 的 shim 直接放在 PNPM_HOME)。如果不看 pnpm 布局,
-        /// pnpm 安装的机器上启动失败快照会永远写"① 全局包:未定位到",最关键的一层证据就丢了。
+        /// 只认 npm 全局安装的布局:包就在 bin 旁边的 <c>node_modules</c> 里。
         /// </para>
         /// </summary>
         private static string? TryGetGlobalDshDirFromShim(string shimPath)
@@ -302,58 +299,12 @@ namespace DSH_Launcher.Services
                 }
 
                 var npmStyle = Path.Combine(binDir, "node_modules", "@deepseek-ai", "dsh");
-                if (Directory.Exists(npmStyle))
-                {
-                    return npmStyle;
-                }
-
-                return TryGetPnpmGlobalDshDir(binDir);
+                return Directory.Exists(npmStyle) ? npmStyle : null;
             }
             catch (Exception)
             {
                 return null;
             }
-        }
-
-        /// <summary>
-        /// 在 pnpm 的 &lt;PNPM_HOME&gt;/global/&lt;版本&gt;/node_modules 下找 dsh。
-        /// 同时试 binDir 自身与它的上级(Windows 的 shim 在 PNPM_HOME\bin,类 Unix 在 PNPM_HOME)。
-        /// </summary>
-        private static string? TryGetPnpmGlobalDshDir(string binDir)
-        {
-            var roots = new List<string> { binDir };
-            var parent = Path.GetDirectoryName(binDir.TrimEnd(Path.DirectorySeparatorChar));
-            if (parent is not null)
-            {
-                roots.Add(parent);
-            }
-
-            foreach (var root in roots)
-            {
-                var globalRoot = Path.Combine(root, "global");
-                if (!Directory.Exists(globalRoot))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    foreach (var versionDir in Directory.EnumerateDirectories(globalRoot))
-                    {
-                        var candidate = Path.Combine(versionDir, "node_modules", "@deepseek-ai", "dsh");
-                        if (Directory.Exists(candidate))
-                        {
-                            return candidate;
-                        }
-                    }
-                }
-                catch (Exception)
-                {
-                    // 某个版本目录不可读只跳过它
-                }
-            }
-
-            return null;
         }
 
         /// <summary>目录内条目数(直接子项);目录不存在或不可枚举返回 -1。</summary>

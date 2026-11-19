@@ -71,7 +71,7 @@ namespace DSH_Launcher.Models
     /// <item><see cref="Config"/> = **不注入任何环境变量**,沿用用户自己的 .npmrc / 环境变量
     /// (即“使用配置源”,默认)。</item>
     /// <item>其余成员 = 已知的公共镜像,启动器会把地址注入子进程的 <c>npm_config_registry</c>,
-    /// npm 与 pnpm 都认这个变量(等价于 <c>--registry</c>)。</item>
+    /// npm 认这个变量(等价于 <c>--registry</c>)。</item>
     /// </list>
     /// 地址映射见 <c>ChildEnvironment.ResolveRegistry</c>。
     /// 枚举按**名字**解析(见 <see cref="LenientEnumConverter{T}"/>),所以增删成员不会读错已有设置。
@@ -180,7 +180,7 @@ namespace DSH_Launcher.Models
 
         /// <summary>
         /// 代理地址(如 <c>http://127.0.0.1:7890</c>),空 = 不使用代理。
-        /// 会注入 npm/pnpm 等子进程的 HTTP_PROXY/HTTPS_PROXY 与 npm_config_proxy。
+        /// 会注入 npm 等子进程的 HTTP_PROXY/HTTPS_PROXY 与 npm_config_proxy。
         /// 改写前先经 <c>ChildEnvironment.NormalizeProxyUrl</c> 归一化。
         /// </summary>
         public string ProxyUrl { get; set; } = string.Empty;

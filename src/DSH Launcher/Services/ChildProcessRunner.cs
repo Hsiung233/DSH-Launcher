@@ -8,12 +8,12 @@ namespace DSH_Launcher.Services
     /// 子进程执行的**唯一出口**:定位/编码/环境注入/等待退出这些共性只在这里写一遍。
     /// <para>
     /// 为什么要有它:改造前同一套"静默启动 → 收 stdio → 逐行判定编码 → 等退出"的管道被抄了五份
-    /// (npm 安装、npm 查询、dsh 子命令捕获、dsh 子命令流式、pnpm 探测),抄漏的表现已经出现过 ——
+    /// (npm 安装、npm 查询、dsh 子命令捕获、dsh 子命令流式、命令探测),抄漏的表现已经出现过 ——
     /// 其中一份既没有 <c>Dispose</c> 也没有收尾的 <c>WaitForExit</c>,末尾输出会被截断。
     /// </para>
     /// <para>
     /// 统一注入"环境设置"(npm 源 / 代理,见 <see cref="ChildEnvironment"/>):
-    /// 本类服务的都是**非 <c>dsh web</c>** 的子进程(npm/pnpm 安装/查询、命令探测)。
+    /// 本类服务的都是**非 <c>dsh web</c>** 的子进程(npm 安装/查询、命令探测)。
     /// <c>dsh web</c> 服务进程**不**走本类 —— 它是本机服务,注入代理会让 WebView/浏览器访问
     /// <c>127.0.0.1</c> 绕一圈,那条路径在 <see cref="DshService"/> 里单独拼启动参数。
     /// </para>
@@ -34,13 +34,9 @@ namespace DSH_Launcher.Services
         /// <summary>
         /// 静默执行一条命令行并捕获输出(不抛异常之外的任何副作用;失败由调用方决定怎么上报)。
         /// </summary>
-        /// <param name="nodePath">
-        /// 要写入子进程的 <c>NODE_PATH</c>;空串表示不动环境。
-        /// 只有 dsh 命令需要(见 <see cref="DshCli.ResolveNodePathFor"/>),其余探测保持原样。
-        /// </param>
-        public static async Task<CaptureResult> CaptureAsync(string command, string nodePath = "")
+        public static async Task<CaptureResult> CaptureAsync(string command)
         {
-            using var process = StartShell(command, nodePath);
+            using var process = StartShell(command);
 
             // 必须先 Start 再读 StandardOutput,否则抛
             // "StandardOut has not been redirected or the process hasn't started yet"
@@ -58,9 +54,9 @@ namespace DSH_Launcher.Services
         /// 执行一条命令行并把输出**逐行**回调(用于需要实时反馈的长时间操作);
         /// 返回退出码。回调可能在线程池线程上触发。
         /// </summary>
-        public static async Task<int> StreamAsync(string command, Action<string> onLine, string nodePath = "")
+        public static async Task<int> StreamAsync(string command, Action<string> onLine)
         {
-            using var process = StartShell(command, nodePath);
+            using var process = StartShell(command);
             process.EnableRaisingEvents = true;
 
             var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -86,21 +82,16 @@ namespace DSH_Launcher.Services
             await exited.Task;
 
             // ⚠ 无参 WaitForExit 会等待异步输出读取**全部完成**,不能省:
-            //   否则 pnpm/npm 末尾那几行(通常正是错误原因)会被截断。
+            //   否则 npm 末尾那几行(通常正是错误原因)会被截断。
             await Task.Run(process.WaitForExit);
             return process.ExitCode;
         }
 
         /// <summary>按平台 shell 规则启动一个隐藏的子进程(Windows 走 cmd.exe /c,类 Unix 走登录 shell)。</summary>
-        private static Process StartShell(string command, string nodePath)
+        private static Process StartShell(string command)
         {
             var startInfo = PlatformProcess.CreateShellStartInfo(
                 command, redirectOutput: true, rawByteOutput: true);
-
-            if (nodePath.Length > 0)
-            {
-                startInfo.Environment["NODE_PATH"] = nodePath;
-            }
 
             // 统一注入 npm 源 / 代理:这里是所有非 dsh web 子进程的公共出口,
             // 所以只需在这一处注入,不必在每个调用点重复

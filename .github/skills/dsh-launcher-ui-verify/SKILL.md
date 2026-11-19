@@ -203,7 +203,7 @@ Get-Content "$env:LOCALAPPDATA\DSH Launcher\Settings\app.log" -Tail 8
 >   `[环境] npm 源 = …` / `[环境] 代理 = …(不走代理: …)`，在 `app.log` 里可直接核对生效值。
 >
 > **验证“环境设置真的传给了子进程”**（实测过且无副作用）：
-> ① registry：在首页安装/更新 dsh 时让包名指向一个不存在的包，npm/pnpm 的报错会带上实际请求地址；
+> ① registry：在首页安装/更新 dsh 时让包名指向一个不存在的包，npm 的报错会带上实际请求地址；
 >    选“使用配置源”时这里会变成你 .npmrc 里的源。
 > ② 代理：把代理写成非法值（如 `127.0.0.1:9`）再跑同一条命令，报错里会出现代理连接失败。
 > ③ 无副作用自查：失败安装不会改变已安装版本；改代理/registry 不影响已在运行的 `dsh web`。
@@ -261,16 +261,16 @@ Get-Content "$env:LOCALAPPDATA\DSH Launcher\Settings\app.log" -Tail 8
     正确做法：**按码点断言** —— 读 `LogTextBlock` 的 `Name`，检查 `Contains([char]0x2009)` / `Contains([char]0x2715)` 等，
     再用 `[regex]::Match($log, '.{0,2}WARN.{0,2}').Value` 把码点列出来看。
     拿不准就去抓**原始字节**（子进程输出按 Latin1 收，打印十六进制），比猜字符靠谱。
-22. **子进程输出编码：UTF-8 与系统代码页会混在同一条流里**（dsh/pnpm 日志乱码踩过）：
+22. **子进程输出编码：UTF-8 与系统代码页会混在同一条流里**（dsh/npm 日志乱码踩过）：
     - `ProcessStartInfo` 开了重定向但**没设 `StandardOutputEncoding`** 时，.NET 回退到系统 ANSI 代码页
       （中文 Windows = GBK/936）。
-    - 而 **Node 系工具（dsh / npm / pnpm）写 UTF-8** ⇒ 必然乱码：`…WARN…` → `鈥塛ARN鈥?`、`└─┬` → `鈹溾攢鈹?`、`✕` → `鉁?`。
+    - 而 **Node 系工具（dsh / npm）写 UTF-8** ⇒ 必然乱码：`…WARN…` → `鈥塛ARN鈥?`、`└─┬` → `鈹溾攢鈹?`、`✕` → `鉁?`。
     - **但不能一刀切换成 UTF-8**：`cmd.exe` 自己的消息（如 `'xxx' 不是内部或外部命令`）是 **OEM 代码页**，
       且两种输出会落在**同一管道（甚至同一 stderr）**上。实测 `chcp 65001` 对**重定向的 cmd** 输出**无效**。
     - 解法：重定向编码用 **`Encoding.Latin1`**（字节↔字符无损，当“原样字节”通道），
       拿到字符串后再逐行判定：**先试严格 UTF-8**（`new UTF8Encoding(false, throwOnInvalidBytes: true)`），
       抛 `DecoderFallbackException` 就回退 OEM 代码页。GBK 第二字节常落在 0x40-0x7F，不是合法 UTF-8 续字节，所以判定很可靠。
-    - 验证：让首页日志里出现带盒线字符与窄空格的输出（如安装/更新 dsh 的 pnpm 警告树），
+    - 验证：让首页日志里出现带盒线字符与窄空格的输出（如安装/更新 dsh 的 npm 依赖树与警告），
       检查 `LogTextBlock` 里对应码点正确。
 23. **`CheckBox` 不支持 `InvokePattern`，只能用 `TogglePattern`**：
     对着 CheckBox 取 `InvokePattern` 会抛「不支持的模式」。另外**部分元素取 Pattern 也会失败**

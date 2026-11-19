@@ -130,7 +130,7 @@ namespace DSH_Launcher.Services
         /// 解码子进程输出的一行。
         /// <para>
         /// ⚠ 不能“一刀切”用某个编码:一次 <c>cmd.exe /c</c> 的输出里可能**混着两种** ——
-        /// Node 系工具(dsh / npm / pnpm)写 UTF-8,而 cmd.exe 自己的消息
+        /// Node 系工具(dsh / npm)写 UTF-8,而 cmd.exe 自己的消息
         /// (如「'xxx' 不是内部或外部命令」)是系统 OEM 代码页;实测 <c>chcp 65001</c>
         /// 对重定向的 cmd 输出**无效**,而且两者还会落在同一管道(甚至同一 stderr)上,无法按流分开。
         /// </para>
@@ -175,7 +175,7 @@ namespace DSH_Launcher.Services
         /// **输出会被展示或解析的调用都要传 true** —— 否则 .NET 会用系统代码页一刀切,
         /// 把 Node 系的 UTF-8 输出解成乱码(实测 <c>…WARN…</c> → <c>鈥塛ARN鈥?</c>、
         /// <c>—</c> → <c>鈥?</c>、盒线字符 → <c>鈹?/c>)。
-        /// <para>只有纯 ASCII 用途(如 <c>pnpm --version</c>)可以不传。</para>
+        /// <para>只有纯 ASCII 用途(如 <c>npm --version</c>)可以不传。</para>
         /// </param>
         public static ProcessStartInfo CreateShellStartInfo(
             string command,
